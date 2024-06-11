@@ -20,29 +20,29 @@ type MyType = MyType Text
 ```
 
 ```ucm
-.simple> update.old
+scratch/main simple> update.old
 
   ⍟ I've updated these names to your new definition:
-  
+
     type MyType
     x : Int
 
-.simple> todo
+scratch/main simple> todo
 
   🚧
-  
+
   The namespace has 2 transitive dependent(s) left to upgrade.
   Your edit frontier is the dependents of these definitions:
-  
+
     type #vijug0om28
     #gjmq673r1v : Nat
-  
+
   I recommend working on them in the following order:
-  
+
   1. useMyType : Nat
   2. useX      : Nat
-  
-  
+
+
 
 ```
 ## A merge with conflicting updates.
@@ -68,16 +68,16 @@ type MyType = MyType Nat
 The transcript failed due to an error in the stanza above. The error is:
 
 
-  
+
     ❓
-    
+
     I couldn't resolve any of these symbols:
-    
+
         2 | type MyType = MyType Nat
-    
-    
+
+
     Symbol   Suggestions
-             
+
     Nat      No matches
-  
+
 

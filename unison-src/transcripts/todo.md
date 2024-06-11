@@ -3,7 +3,7 @@
 ## Simple type-changing update.
 
 ```ucm:hide
-.simple> builtins.merge
+scratch/main simple> builtins.merge
 ```
 
 ```unison:hide
@@ -16,7 +16,7 @@ useMyType = match MyType 1 with
 ```
 
 ```ucm:hide
-.simple> add
+scratch/main simple> add
 ```
 
 Perform a type-changing update so dependents are added to our update frontier.
@@ -28,14 +28,14 @@ type MyType = MyType Text
 ```
 
 ```ucm:error
-.simple> update.old
-.simple> todo
+scratch/main simple> update.old
+scratch/main simple> todo
 ```
 
 ## A merge with conflicting updates.
 
 ```ucm:hide
-.mergeA> builtins.merge
+scratch/main mergeA> builtins.merge
 ```
 
 ```unison:hide
@@ -46,7 +46,7 @@ type MyType = MyType
 Set up two branches with the same starting point.
 
 ```ucm:hide
-.mergeA> add
+scratch/main mergeA> add
 scratch/main> fork .mergeA .mergeB
 ```
 
@@ -58,7 +58,7 @@ type MyType = MyType Nat
 ```
 
 ```ucm:hide
-.mergeA> update.old
+scratch/main mergeA> update.old
 ```
 
 ```unison:hide
@@ -67,18 +67,18 @@ type MyType = MyType Int
 ```
 
 ```ucm:hide
-.mergeB> update.old
+scratch/main mergeB> update.old
 ```
 
 ```ucm:error
-.mergeA> merge.old .mergeB
-.mergeA> todo
+scratch/main mergeA> merge.old .mergeB
+scratch/main mergeA> todo
 ```
 
 ## A named value that appears on the LHS of a patch isn't shown
 
 ```ucm:hide
-.lhs> builtins.merge
+scratch/main lhs> builtins.merge
 ```
 
 ```unison
@@ -86,7 +86,7 @@ foo = 801
 ```
 
 ```ucm
-.lhs> add
+scratch/main lhs> add
 ```
 
 ```unison
@@ -94,7 +94,7 @@ foo = 802
 ```
 
 ```ucm
-.lhs> update.old
+scratch/main lhs> update.old
 ```
 
 ```unison
@@ -102,8 +102,8 @@ oldfoo = 801
 ```
 
 ```ucm
-.lhs> add
-.lhs> todo
+scratch/main lhs> add
+scratch/main lhs> todo
 ```
 
 ## A type-changing update to one element of a cycle, which doesn't propagate to the other
