@@ -47,7 +47,7 @@ Set up two branches with the same starting point.
 
 ```ucm:hide
 .mergeA> add
-.> fork .mergeA .mergeB
+scratch/main> fork .mergeA .mergeB
 ```
 
 Update `x` to a different term in each branch.
