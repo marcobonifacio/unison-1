@@ -1,0 +1,847 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-comment">-- | The &quot;decl coherency check&quot;: a type declaration in a namespace is &quot;coherent&quot; if it satisfies both of the following</span><span>
+</span><span id="line-2"></span><span class="hs-comment">-- criteria.</span><span>
+</span><span id="line-3"></span><span class="hs-comment">--</span><span>
+</span><span id="line-4"></span><span class="hs-comment">--   1. For each naming of the type decl (say &quot;Foo&quot;#foohash), there exists exactly one name for each of its constructors</span><span>
+</span><span id="line-5"></span><span class="hs-comment">--      arbitrarily deep in the corresponding namespace (&quot;Foo&quot; in this example).</span><span>
+</span><span id="line-6"></span><span class="hs-comment">--</span><span>
+</span><span id="line-7"></span><span class="hs-comment">--      This allows us to render the decl naturally, as in</span><span>
+</span><span id="line-8"></span><span class="hs-comment">--</span><span>
+</span><span id="line-9"></span><span class="hs-comment">--        structural type Foo</span><span>
+</span><span id="line-10"></span><span class="hs-comment">--          = Bar Nat Int</span><span>
+</span><span id="line-11"></span><span class="hs-comment">--          | internal.hello.Bonk Nat</span><span>
+</span><span id="line-12"></span><span class="hs-comment">--</span><span>
+</span><span id="line-13"></span><span class="hs-comment">--      which corresponds to the three names</span><span>
+</span><span id="line-14"></span><span class="hs-comment">--</span><span>
+</span><span id="line-15"></span><span class="hs-comment">--        &quot;Foo&quot;                     =&gt; #foohash</span><span>
+</span><span id="line-16"></span><span class="hs-comment">--        &quot;Foo.Bar&quot;                 =&gt; #foohash#0</span><span>
+</span><span id="line-17"></span><span class="hs-comment">--        &quot;Foo.internal.hello.Bonk&quot; =&gt; #foohash#1</span><span>
+</span><span id="line-18"></span><span class="hs-comment">--</span><span>
+</span><span id="line-19"></span><span class="hs-comment">--      We could not do if there was at least one constructor whose full name does not contain the full name of the type</span><span>
+</span><span id="line-20"></span><span class="hs-comment">--      decl itself as a prefix.</span><span>
+</span><span id="line-21"></span><span class="hs-comment">--</span><span>
+</span><span id="line-22"></span><span class="hs-comment">--      A notable consequence of this requirement is that a second naming of a decl (i.e. an alias) cannot be embedded</span><span>
+</span><span id="line-23"></span><span class="hs-comment">--      within the first naming, as in:</span><span>
+</span><span id="line-24"></span><span class="hs-comment">--</span><span>
+</span><span id="line-25"></span><span class="hs-comment">--        type Foo = ...</span><span>
+</span><span id="line-26"></span><span class="hs-comment">--        type Foo.some.inner.namespace = ... -- an alias of Foo</span><span>
+</span><span id="line-27"></span><span class="hs-comment">--</span><span>
+</span><span id="line-28"></span><span class="hs-comment">--   2. No constructor has a &quot;stray&quot; name that does not have a prefix that equals the type declaration's name. For</span><span>
+</span><span id="line-29"></span><span class="hs-comment">--      example, in the namespace</span><span>
+</span><span id="line-30"></span><span class="hs-comment">--</span><span>
+</span><span id="line-31"></span><span class="hs-comment">--        &quot;Foo&quot;                 =&gt; #foohash</span><span>
+</span><span id="line-32"></span><span class="hs-comment">--        &quot;Foo.Bar&quot;             =&gt; #foohash#0</span><span>
+</span><span id="line-33"></span><span class="hs-comment">--        &quot;Deep.What.SomeAlias&quot; =&gt; #foohash#0</span><span>
+</span><span id="line-34"></span><span class="hs-comment">--</span><span>
+</span><span id="line-35"></span><span class="hs-comment">--      the constructor &quot;What.SomeAlias&quot; is &quot;stray&quot;, as the type decl #foohash has no name that matches any prefix</span><span>
+</span><span id="line-36"></span><span class="hs-comment">--      (i.e. &quot;Deep.What&quot; nor &quot;Deep&quot;).</span><span>
+</span><span id="line-37"></span><span class="hs-comment">--</span><span>
+</span><span id="line-38"></span><span class="hs-comment">-- On to the implementation. We are going to traverse the namespace depth-first. As we go, we have a stateful mapping</span><span>
+</span><span id="line-39"></span><span class="hs-comment">-- between decl reference that we *have* seen a name for in one of our parent namespace, and its corresponding set of</span><span>
+</span><span id="line-40"></span><span class="hs-comment">-- constructors that we *haven't* yet seen names for, but expect to, before fully searching the corresponding</span><span>
+</span><span id="line-41"></span><span class="hs-comment">-- sub-namespace (e.g. the child namespace named &quot;Foo&quot; of the namepace that declares a decl &quot;Foo&quot;).</span><span>
+</span><span id="line-42"></span><span class="hs-comment">--</span><span>
+</span><span id="line-43"></span><span class="hs-comment">-- When processing a namespace, we first process all terms. Each constructor will fall into one of three cases:</span><span>
+</span><span id="line-44"></span><span class="hs-comment">--</span><span>
+</span><span id="line-45"></span><span class="hs-comment">-- &gt; +----------------------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-46"></span><span class="hs-comment">-- &gt; | Case         | Mapping before       | Encountered constructor | Mapping after                                  |</span><span>
+</span><span id="line-47"></span><span class="hs-comment">-- &gt; +----------------------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-48"></span><span class="hs-comment">-- &gt; | Happy path   | { #foo : {0, 1, 2} } | #foo#1                  | { #foo : {0, 2} }                              |</span><span>
+</span><span id="line-49"></span><span class="hs-comment">-- &gt; | Already seen | { #foo : {0, 1, 2} } | #foo#5                  | Error: duplicate naming for constructor #foo#5 |</span><span>
+</span><span id="line-50"></span><span class="hs-comment">-- &gt; | Never seen   | { #foo : {0, 1, 2} } | #bar#2                  | Error: stray constructor #bar#2                |</span><span>
+</span><span id="line-51"></span><span class="hs-comment">-- &gt; +----------------------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-52"></span><span class="hs-comment">--</span><span>
+</span><span id="line-53"></span><span class="hs-comment">-- In &quot;happy path&quot;, we see a naming of a constructor that we're expecting, and check it off.</span><span>
+</span><span id="line-54"></span><span class="hs-comment">-- In &quot;already seen&quot;, we see a second naming of a constructor that we're no longer expecting, and fail.</span><span>
+</span><span id="line-55"></span><span class="hs-comment">-- In &quot;never seen&quot;, we see a naming of a constructor before any naming of its decl, so we fail.</span><span>
+</span><span id="line-56"></span><span class="hs-comment">--</span><span>
+</span><span id="line-57"></span><span class="hs-comment">-- Next, we process all type decls. Each will again fall into one of three cases:</span><span>
+</span><span id="line-58"></span><span class="hs-comment">--</span><span>
+</span><span id="line-59"></span><span class="hs-comment">-- &gt; +-----------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-60"></span><span class="hs-comment">-- &gt; | Case             | Mapping before       | Declaration | Num constructors | New mapping              |</span><span>
+</span><span id="line-61"></span><span class="hs-comment">-- &gt; +-----------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-62"></span><span class="hs-comment">-- &gt; | Uninhabited decl |                      | #foo        | 0                |                          |</span><span>
+</span><span id="line-63"></span><span class="hs-comment">-- &gt; | Inhabited decl   |                      | #foo        | 1 or more        | { #foo : {0, ..., n-1} } |</span><span>
+</span><span id="line-64"></span><span class="hs-comment">-- &gt; | Already seen     | { foo : {0, 1, 2}  } | #foo        | Irrelevant       | Error: nested decl alias |</span><span>
+</span><span id="line-65"></span><span class="hs-comment">-- &gt; +-----------------------------------------------------------------------------------------------------+</span><span>
+</span><span id="line-66"></span><span class="hs-comment">--</span><span>
+</span><span id="line-67"></span><span class="hs-comment">-- In &quot;uninhabited decl&quot;, we find a decl with no constructors, so we don't expect anything new.</span><span>
+</span><span id="line-68"></span><span class="hs-comment">-- In &quot;already seen&quot;, we find a second naming of a decl, whose constructors will necessarily violate coherency condition</span><span>
+</span><span id="line-69"></span><span class="hs-comment">--   (1) above.</span><span>
+</span><span id="line-70"></span><span class="hs-comment">--</span><span>
+</span><span id="line-71"></span><span class="hs-comment">-- In &quot;inhabited decl&quot;, we find a decl with N constructors, and handle it by:</span><span>
+</span><span id="line-72"></span><span class="hs-comment">--   1. Adding to our state that we expect a name for each.</span><span>
+</span><span id="line-73"></span><span class="hs-comment">--   2. Recursing into the child namespace whose name matches the decl.</span><span>
+</span><span id="line-74"></span><span class="hs-comment">--   3. (If we return from the recursion without short-circuiting) remove the mapping added in step (1) and assert that</span><span>
+</span><span id="line-75"></span><span class="hs-comment">--      its value is the empty set (meaning we encountered a name for every constructor).</span><span>
+</span><span id="line-76"></span><span class="hs-comment">--</span><span>
+</span><span id="line-77"></span><span class="hs-comment">-- Note: This check could be moved into SQLite (with sufficient schema support) some day, but for now, we just do this</span><span>
+</span><span id="line-78"></span><span class="hs-comment">-- in memory.</span><span>
+</span><span id="line-79"></span><span class="hs-comment">--</span><span>
+</span><span id="line-80"></span><span class="hs-comment">-- Note: once upon a time, decls could be &quot;incoherent&quot;. Then, we decided we want decls to be &quot;coherent&quot;. Thus, this</span><span>
+</span><span id="line-81"></span><span class="hs-comment">-- machinery was invented.</span><span>
+</span><span id="line-82"></span><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">Unison.Merge.DeclCoherencyCheck</span><span>
+</span><span id="line-83"></span><span>  </span><span class="hs-special">(</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier">IncoherentDeclReason</span></a></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">,</span><span>
+</span><span id="line-84"></span><span>    </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#checkDeclCoherency"><span class="hs-identifier">checkDeclCoherency</span></a></span><span class="hs-special">,</span><span>
+</span><span id="line-85"></span><span>    </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#lenientCheckDeclCoherency"><span class="hs-identifier">lenientCheckDeclCoherency</span></a></span><span class="hs-special">,</span><span>
+</span><span id="line-86"></span><span>  </span><span class="hs-special">)</span><span>
+</span><span id="line-87"></span><span class="hs-keyword">where</span><span>
+</span><span id="line-88"></span><span>
+</span><span id="line-89"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Lens</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-operator">(%=)</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-operator">(.=)</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">_2</span></span><span class="hs-special">)</span><span>
+</span><span id="line-90"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Monad.Except</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">ExceptT</span></span><span class="hs-special">)</span><span>
+</span><span id="line-91"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Monad.Except</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Except</span></span><span>
+</span><span id="line-92"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Monad.State.Strict</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">StateT</span></span><span class="hs-special">)</span><span>
+</span><span id="line-93"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Monad.State.Strict</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">State</span></span><span>
+</span><span id="line-94"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Monad.Trans.Except</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Except</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">except</span></span><span class="hs-special">)</span><span>
+</span><span id="line-95"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Functor.Compose</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Compose</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-96"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.IntMap.Strict</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">IntMap</span></span><span class="hs-special">)</span><span>
+</span><span id="line-97"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.IntMap.Strict</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">IntMap</span></span><span>
+</span><span id="line-98"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.List</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">List</span></span><span>
+</span><span id="line-99"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.List.NonEmpty</span></span><span> </span><span class="hs-special">(</span><span class="hs-keyword">pattern</span><span> </span><span class="annot"><span class="hs-operator">(:|)</span></span><span class="hs-special">)</span><span>
+</span><span id="line-100"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Map.Strict</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Map</span></span><span>
+</span><span id="line-101"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">fromJust</span></span><span class="hs-special">)</span><span>
+</span><span id="line-102"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Set</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Set</span></span><span>
+</span><span id="line-103"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">U.Codebase.Reference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Reference'</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">TypeReference</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">TypeReferenceId</span></span><span class="hs-special">)</span><span>
+</span><span id="line-104"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.ConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">GConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-105"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.DataDeclaration.ConstructorId</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">ConstructorId</span></span><span class="hs-special">)</span><span>
+</span><span id="line-106"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><a href="Unison.Merge.DeclNameLookup.html"><span class="hs-identifier">Unison.Merge.DeclNameLookup</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="Unison.Merge.DeclNameLookup.html#DeclNameLookup"><span class="hs-identifier">DeclNameLookup</span></a></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-107"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Name</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Name</span></span><span class="hs-special">)</span><span>
+</span><span id="line-108"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Name</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Name</span></span><span>
+</span><span id="line-109"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.NameSegment</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">NameSegment</span></span><span class="hs-special">)</span><span>
+</span><span id="line-110"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Prelude</span></span><span>
+</span><span id="line-111"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Referent</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Referent</span></span><span class="hs-special">)</span><span>
+</span><span id="line-112"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Referent</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Referent</span></span><span>
+</span><span id="line-113"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Util.Defns</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Defns</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">DefnsF</span></span><span class="hs-special">)</span><span>
+</span><span id="line-114"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Util.Map</span></span><span> </span><span class="hs-keyword">qualified</span><span> </span><span class="hs-keyword">as</span><span> </span><span class="annot"><span class="hs-identifier">Map</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">deleteLookup</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">deleteLookupJust</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier">upsertF</span></span><span class="hs-special">)</span><span>
+</span><span id="line-115"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Unison.Util.Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">..</span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-116"></span><span>
+</span><span id="line-117"></span><span class="hs-keyword">data</span><span> </span><span id="IncoherentDeclReason"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier hs-var">IncoherentDeclReason</span></a></span></span><span>
+</span><span id="line-118"></span><span>  </span><span class="hs-glyph">=</span><span> </span><span class="hs-comment">-- | A second naming of a constructor was discovered underneath a decl's name, e.g.</span><span>
+</span><span id="line-119"></span><span>    </span><span class="hs-comment">--</span><span>
+</span><span id="line-120"></span><span>    </span><span class="hs-comment">--   Foo#Foo</span><span>
+</span><span id="line-121"></span><span>    </span><span class="hs-comment">--   Foo.Bar#Foo#0</span><span>
+</span><span id="line-122"></span><span>    </span><span class="hs-comment">--   Foo.Some.Other.Name.For.Bar#Foo#0</span><span>
+</span><span id="line-123"></span><span>    </span><span id="IncoherentDeclReason%27ConstructorAlias"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27ConstructorAlias"><span class="hs-identifier hs-var">IncoherentDeclReason'ConstructorAlias</span></a></span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-comment">-- type, first constructor, second constructor</span><span>
+</span><span id="line-124"></span><span>  </span><span class="hs-glyph">|</span><span> </span><span id="IncoherentDeclReason%27MissingConstructorName"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27MissingConstructorName"><span class="hs-identifier hs-var">IncoherentDeclReason'MissingConstructorName</span></a></span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span>
+</span><span id="line-125"></span><span>  </span><span class="hs-glyph">|</span><span> </span><span class="hs-comment">-- | A second naming of a decl was discovered underneath its name, e.g.</span><span>
+</span><span id="line-126"></span><span>    </span><span class="hs-comment">--</span><span>
+</span><span id="line-127"></span><span>    </span><span class="hs-comment">--   Foo#Foo</span><span>
+</span><span id="line-128"></span><span>    </span><span class="hs-comment">--   Foo.Bar#Foo</span><span>
+</span><span id="line-129"></span><span>    </span><span id="IncoherentDeclReason%27NestedDeclAlias"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27NestedDeclAlias"><span class="hs-identifier hs-var">IncoherentDeclReason'NestedDeclAlias</span></a></span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-comment">-- shorter name, longer name</span><span>
+</span><span id="line-130"></span><span>  </span><span class="hs-glyph">|</span><span> </span><span id="IncoherentDeclReason%27StrayConstructor"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27StrayConstructor"><span class="hs-identifier hs-var">IncoherentDeclReason'StrayConstructor</span></a></span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span>
+</span><span id="line-131"></span><span>
+</span><span id="line-132"></span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#checkDeclCoherency"><span class="hs-identifier hs-type">checkDeclCoherency</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-133"></span><span>  </span><span class="hs-keyword">forall</span><span> </span><span id="local-6989586621679217509"><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span></span><span class="hs-operator">.</span><span>
+</span><span id="line-134"></span><span>  </span><span class="annot"><span class="hs-identifier hs-type">Monad</span></span><span> </span><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-glyph">=&gt;</span><span>
+</span><span id="line-135"></span><span>  </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">TypeReferenceId</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Int</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-136"></span><span>  </span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">DefnsF</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReference</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-137"></span><span>  </span><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Either</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier hs-type">IncoherentDeclReason</span></a></span><span> </span><span class="annot"><a href="Unison.Merge.DeclNameLookup.html#DeclNameLookup"><span class="hs-identifier hs-type">DeclNameLookup</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-138"></span><span id="checkDeclCoherency"><span class="annot"><span class="annottext">checkDeclCoherency :: forall (m :: * -&gt; *).
+Monad m =&gt;
+(TypeReferenceId -&gt; m Int)
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; m (Either IncoherentDeclReason DeclNameLookup)
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#checkDeclCoherency"><span class="hs-identifier hs-var hs-var">checkDeclCoherency</span></a></span></span><span> </span><span id="local-6989586621679216827"><span class="annot"><span class="annottext">TypeReferenceId -&gt; m Int
+</span><a href="#local-6989586621679216827"><span class="hs-identifier hs-var">loadDeclNumConstructors</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-139"></span><span>  </span><span class="annot"><span class="annottext">forall e (m :: * -&gt; *) a. ExceptT e m a -&gt; m (Either e a)
+</span><span class="hs-identifier hs-var">Except.runExceptT</span></span><span>
+</span><span id="line-140"></span><span>    </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-identifier hs-var">fmap</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *) a. MonadReader s m =&gt; Getting a s a -&gt; m a
+</span><span class="hs-identifier hs-var">view</span></span><span> </span><span class="annot"><span class="annottext">forall a. IsLabel &quot;declNameLookup&quot; a =&gt; a
+</span><span class="">#declNameLookup</span></span><span class="hs-special">)</span><span>
+</span><span id="line-141"></span><span>    </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (m :: * -&gt; *) s a. Monad m =&gt; StateT s m a -&gt; s -&gt; m s
+</span><span class="hs-operator hs-var">`State.execStateT`</span></span><span> </span><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+-&gt; DeclNameLookup -&gt; DeclCoherencyCheckState
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-var">DeclCoherencyCheckState</span></a></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Map Name Name -&gt; Map Name [Name] -&gt; DeclNameLookup
+</span><a href="Unison.Merge.DeclNameLookup.html#DeclNameLookup"><span class="hs-identifier hs-var">DeclNameLookup</span></a></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-142"></span><span>    </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT
+     DeclCoherencyCheckState (ExceptT IncoherentDeclReason m) ()
+</span><a href="#local-6989586621679216819"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">[</span><span class="hs-special">]</span><span>
+</span><span id="line-143"></span><span>  </span><span class="hs-keyword">where</span><span>
+</span><span id="line-144"></span><span>    </span><span class="annot"><a href="#local-6989586621679216819"><span class="hs-identifier hs-type">go</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-145"></span><span>      </span><span class="hs-special">[</span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-146"></span><span>      </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">DefnsF</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReference</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-147"></span><span>      </span><span class="annot"><span class="hs-identifier hs-type">StateT</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-type">DeclCoherencyCheckState</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ExceptT</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier hs-type">IncoherentDeclReason</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-148"></span><span>    </span><span id="local-6989586621679216819"><span class="annot"><span class="annottext">go :: [NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT
+     DeclCoherencyCheckState (ExceptT IncoherentDeclReason m) ()
+</span><a href="#local-6989586621679216819"><span class="hs-identifier hs-var hs-var">go</span></a></span></span><span> </span><span id="local-6989586621679216818"><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216818"><span class="hs-identifier hs-var">prefix</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span id="local-6989586621679216816"><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216816"><span class="hs-identifier hs-var">defns</span></a></span></span><span> </span><span id="local-6989586621679216815"><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216815"><span class="hs-identifier hs-var">children</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-149"></span><span>      </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Foldable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f b) -&gt; f ()
+</span><span class="hs-identifier hs-var">for_</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216816"><span class="hs-identifier hs-var">defns</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">terms</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-150"></span><span>        </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Ref</span></span><span> </span><span class="annot"><span class="annottext">TypeReference
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-151"></span><span>        </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Con</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ReferenceBuiltin</span></span><span> </span><span class="annot"><span class="annottext">Text
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Word64
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">ConstructorType
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-152"></span><span>        </span><span class="hs-special">(</span><span id="local-6989586621679216808"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216808"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Con</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ReferenceDerived</span></span><span> </span><span id="local-6989586621679216806"><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216806"><span class="hs-identifier hs-var">typeRef</span></a></span></span><span class="hs-special">)</span><span> </span><span id="local-6989586621679216805"><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216805"><span class="hs-identifier hs-var">conId</span></a></span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">ConstructorType
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-153"></span><span>          </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-type">DeclCoherencyCheckState</span></a></span><span> </span><span class="hs-special">{</span><span id="local-6989586621679216804"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+$sel:expectedConstructors:DeclCoherencyCheckState :: DeclCoherencyCheckState
+-&gt; Map TypeReferenceId (Name, ConstructorNames)
+expectedConstructors :: Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#%24sel%3AexpectedConstructors%3ADeclCoherencyCheckState"><span class="hs-identifier hs-var hs-var">expectedConstructors</span></a></span></span><span class="hs-special">}</span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *). MonadState s m =&gt; m s
+</span><span class="hs-identifier hs-var">State.get</span></span><span>
+</span><span id="line-154"></span><span>          </span><span id="local-6989586621679216801"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216801"><span class="hs-identifier hs-var">expectedConstructors1</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall (t :: (* -&gt; *) -&gt; * -&gt; *) (m :: * -&gt; *) a.
+(MonadTrans t, Monad m) =&gt;
+m a -&gt; t m a
+</span><span class="hs-identifier hs-var">lift</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (m :: * -&gt; *) e a. Monad m =&gt; Either e a -&gt; ExceptT e m a
+</span><span class="hs-identifier hs-var">Except.except</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) k v.
+(Functor f, Ord k) =&gt;
+(Maybe v -&gt; f v) -&gt; k -&gt; Map k v -&gt; f (Map k v)
+</span><span class="hs-identifier hs-var">Map.upsertF</span></span><span> </span><span class="annot"><span class="annottext">Maybe (Name, ConstructorNames)
+-&gt; Either IncoherentDeclReason (Name, ConstructorNames)
+</span><a href="#local-6989586621679216799"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216806"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216804"><span class="hs-identifier hs-var">expectedConstructors</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span class="hs-cpp">
+          #expectedConstructors .= expectedConstructors1
+</span><span>          </span><span class="hs-keyword">where</span><span>
+</span><span id="line-157"></span><span>            </span><span class="annot"><a href="#local-6989586621679216799"><span class="hs-identifier hs-type">f</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-158"></span><span>              </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">,</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-159"></span><span>              </span><span class="annot"><span class="hs-identifier hs-type">Either</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier hs-type">IncoherentDeclReason</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">,</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-160"></span><span>            </span><span id="local-6989586621679216799"><span class="annot"><span class="annottext">f :: Maybe (Name, ConstructorNames)
+-&gt; Either IncoherentDeclReason (Name, ConstructorNames)
+</span><a href="#local-6989586621679216799"><span class="hs-identifier hs-var hs-var">f</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-161"></span><span>              </span><span class="annot"><span class="annottext">Maybe (Name, ConstructorNames)
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a b. a -&gt; Either a b
+</span><span class="hs-identifier hs-var">Left</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name -&gt; IncoherentDeclReason
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27StrayConstructor"><span class="hs-identifier hs-var">IncoherentDeclReason'StrayConstructor</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216798"><span class="hs-identifier hs-var">name1</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-162"></span><span>              </span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span class="hs-special">(</span><span id="local-6989586621679216797"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216797"><span class="hs-identifier hs-var">typeName</span></a></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216796"><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216796"><span class="hs-identifier hs-var">expected</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-163"></span><span>                </span><span class="hs-keyword">case</span><span> </span><span class="annot"><span class="annottext">HasCallStack =&gt;
+Word64 -&gt; Name -&gt; ConstructorNames -&gt; Either Name ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#recordConstructorName"><span class="hs-identifier hs-var">recordConstructorName</span></a></span><span> </span><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216805"><span class="hs-identifier hs-var">conId</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216798"><span class="hs-identifier hs-var">name1</span></a></span><span> </span><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216796"><span class="hs-identifier hs-var">expected</span></a></span><span> </span><span class="hs-keyword">of</span><span>
+</span><span id="line-164"></span><span>                  </span><span class="annot"><span class="hs-identifier hs-type">Left</span></span><span> </span><span id="local-6989586621679216794"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216794"><span class="hs-identifier hs-var">existingName</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a b. a -&gt; Either a b
+</span><span class="hs-identifier hs-var">Left</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name -&gt; Name -&gt; Name -&gt; IncoherentDeclReason
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27ConstructorAlias"><span class="hs-identifier hs-var">IncoherentDeclReason'ConstructorAlias</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216797"><span class="hs-identifier hs-var">typeName</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216794"><span class="hs-identifier hs-var">existingName</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216798"><span class="hs-identifier hs-var">name1</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-165"></span><span>                  </span><span class="annot"><span class="hs-identifier hs-type">Right</span></span><span> </span><span id="local-6989586621679216793"><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216793"><span class="hs-identifier hs-var">expected1</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a b. b -&gt; Either a b
+</span><span class="hs-identifier hs-var">Right</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216797"><span class="hs-identifier hs-var">typeName</span></a></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216793"><span class="hs-identifier hs-var">expected1</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-166"></span><span>              </span><span class="hs-keyword">where</span><span>
+</span><span id="line-167"></span><span>                </span><span id="local-6989586621679216798"><span class="annot"><span class="annottext">name1 :: Name
+</span><a href="#local-6989586621679216798"><span class="hs-identifier hs-var hs-var">name1</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">NameSegment -&gt; Name
+</span><a href="#local-6989586621679216792"><span class="hs-identifier hs-var">fullName</span></a></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216808"><span class="hs-identifier hs-var">name</span></a></span><span>
+</span><span id="line-168"></span><span>
+</span><span id="line-169"></span><span>      </span><span id="local-6989586621679216791"><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216791"><span class="hs-identifier hs-var">childrenWeWentInto</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span>
+</span><span id="line-170"></span><span>        </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Witherable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f (Maybe b)) -&gt; f (t b)
+</span><span class="hs-identifier hs-var">forMaybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216816"><span class="hs-identifier hs-var">defns</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">types</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-171"></span><span>          </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ReferenceBuiltin</span></span><span> </span><span class="annot"><span class="annottext">Text
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="annot"><span class="annottext">forall a. Maybe a
+</span><span class="hs-identifier hs-var">Nothing</span></span><span>
+</span><span id="line-172"></span><span>          </span><span class="hs-special">(</span><span id="local-6989586621679216789"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216789"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ReferenceDerived</span></span><span> </span><span id="local-6989586621679216788"><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216788"><span class="hs-identifier hs-var">typeRef</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-173"></span><span>            </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-type">DeclCoherencyCheckState</span></a></span><span> </span><span class="hs-special">{</span><span id="local-6989586621679216787"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+expectedConstructors :: Map TypeReferenceId (Name, ConstructorNames)
+$sel:expectedConstructors:DeclCoherencyCheckState :: DeclCoherencyCheckState
+-&gt; Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216787"><span class="hs-identifier hs-var hs-var">expectedConstructors</span></a></span></span><span class="hs-special">}</span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *). MonadState s m =&gt; m s
+</span><span class="hs-identifier hs-var">State.get</span></span><span>
+</span><span id="line-174"></span><span>            </span><span id="local-6989586621679216786"><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Name, ConstructorNames))
+</span><a href="#local-6989586621679216786"><span class="hs-identifier hs-var">whatHappened</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-175"></span><span>              </span><span class="hs-keyword">let</span><span> </span><span class="annot"><a href="#local-6989586621679216785"><span class="hs-identifier hs-type">recordNewDecl</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-176"></span><span>                    </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">,</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-177"></span><span>                    </span><span class="annot"><span class="hs-identifier hs-type">Compose</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ExceptT</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason"><span class="hs-identifier hs-type">IncoherentDeclReason</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679217509"><span class="hs-identifier hs-type">m</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#WhatHappened"><span class="hs-identifier hs-type">WhatHappened</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">,</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-178"></span><span>                  </span><span id="local-6989586621679216785"><span class="annot"><span class="annottext">recordNewDecl :: Maybe (Name, ConstructorNames)
+-&gt; Compose
+     (ExceptT IncoherentDeclReason m)
+     WhatHappened
+     (Name, ConstructorNames)
+</span><a href="#local-6989586621679216785"><span class="hs-identifier hs-var hs-var">recordNewDecl</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-179"></span><span>                    </span><span class="annot"><span class="annottext">forall {k} {k1} (f :: k -&gt; *) (g :: k1 -&gt; k) (a :: k1).
+f (g a) -&gt; Compose f g a
+</span><span class="hs-identifier hs-var">Compose</span></span><span> </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-180"></span><span>                      </span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span class="hs-special">(</span><span id="local-6989586621679216783"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216783"><span class="hs-identifier hs-var">shorterTypeName</span></a></span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="annottext">ConstructorNames
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall e (m :: * -&gt; *) a. MonadError e m =&gt; e -&gt; m a
+</span><span class="hs-identifier hs-var">Except.throwError</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name -&gt; Name -&gt; IncoherentDeclReason
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27NestedDeclAlias"><span class="hs-identifier hs-var">IncoherentDeclReason'NestedDeclAlias</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216783"><span class="hs-identifier hs-var">shorterTypeName</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216781"><span class="hs-identifier hs-var">typeName</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-181"></span><span>                      </span><span class="annot"><span class="annottext">Maybe (Name, ConstructorNames)
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-182"></span><span>                        </span><span class="annot"><span class="annottext">forall (t :: (* -&gt; *) -&gt; * -&gt; *) (m :: * -&gt; *) a.
+(MonadTrans t, Monad m) =&gt;
+m a -&gt; t m a
+</span><span class="hs-identifier hs-var">lift</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">TypeReferenceId -&gt; m Int
+</span><a href="#local-6989586621679216827"><span class="hs-identifier hs-var">loadDeclNumConstructors</span></a></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216788"><span class="hs-identifier hs-var">typeRef</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; f a -&gt; (a -&gt; b) -&gt; f b
+</span><span class="hs-operator hs-var">&lt;&amp;&gt;</span></span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-183"></span><span>                          </span><span class="annot"><span class="annottext">Int
+</span><span class="hs-number">0</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. WhatHappened a
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#UninhabitedDecl"><span class="hs-identifier hs-var">UninhabitedDecl</span></a></span><span>
+</span><span id="line-184"></span><span>                          </span><span id="local-6989586621679216778"><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216778"><span class="hs-identifier hs-var">n</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; WhatHappened a
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#InhabitedDecl"><span class="hs-identifier hs-var">InhabitedDecl</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216781"><span class="hs-identifier hs-var">typeName</span></a></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="annottext">Int -&gt; ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#emptyConstructorNames"><span class="hs-identifier hs-var">emptyConstructorNames</span></a></span><span> </span><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216778"><span class="hs-identifier hs-var">n</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-185"></span><span>              </span><span class="annot"><span class="annottext">forall (t :: (* -&gt; *) -&gt; * -&gt; *) (m :: * -&gt; *) a.
+(MonadTrans t, Monad m) =&gt;
+m a -&gt; t m a
+</span><span class="hs-identifier hs-var">lift</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall {k1} {k2} (f :: k1 -&gt; *) (g :: k2 -&gt; k1) (a :: k2).
+Compose f g a -&gt; f (g a)
+</span><span class="hs-identifier hs-var">getCompose</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) k v.
+(Functor f, Ord k) =&gt;
+(Maybe v -&gt; f v) -&gt; k -&gt; Map k v -&gt; f (Map k v)
+</span><span class="hs-identifier hs-var">Map.upsertF</span></span><span> </span><span class="annot"><span class="annottext">Maybe (Name, ConstructorNames)
+-&gt; Compose
+     (ExceptT IncoherentDeclReason m)
+     WhatHappened
+     (Name, ConstructorNames)
+</span><a href="#local-6989586621679216785"><span class="hs-identifier hs-var">recordNewDecl</span></a></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216788"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216787"><span class="hs-identifier hs-var">expectedConstructors</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-186"></span><span>            </span><span class="hs-keyword">case</span><span> </span><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Name, ConstructorNames))
+</span><a href="#local-6989586621679216786"><span class="hs-identifier hs-var">whatHappened</span></a></span><span> </span><span class="hs-keyword">of</span><span>
+</span><span id="line-187"></span><span>              </span><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Name, ConstructorNames))
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#UninhabitedDecl"><span class="hs-identifier hs-var">UninhabitedDecl</span></a></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span class="hs-cpp">
+                #declNameLookup . #declToConstructors %= Map.insert typeName []
+</span><span>                </span><span class="hs-identifier">pure</span><span> </span><span class="hs-identifier">Nothing</span><span>
+</span><span id="line-190"></span><span>              </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#InhabitedDecl"><span class="hs-identifier hs-type">InhabitedDecl</span></a></span><span> </span><span id="local-6989586621679216773"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216773"><span class="hs-identifier hs-var">expectedConstructors1</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-191"></span><span>                </span><span id="local-6989586621679216772"><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216772"><span class="hs-identifier hs-var">child</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span>
+</span><span id="line-192"></span><span>                  </span><span class="annot"><span class="annottext">forall k a. Ord k =&gt; k -&gt; Map k a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Map.lookup</span></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216789"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216815"><span class="hs-identifier hs-var">children</span></a></span><span> </span><span class="annot"><span class="annottext">forall a b. a -&gt; (a -&gt; b) -&gt; b
+</span><span class="hs-operator hs-var">&amp;</span></span><span> </span><span class="annot"><span class="annottext">forall (m :: * -&gt; *) a. Applicative m =&gt; m a -&gt; Maybe a -&gt; m a
+</span><span class="hs-identifier hs-var">onNothing</span></span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-193"></span><span>                    </span><span class="annot"><span class="annottext">forall e (m :: * -&gt; *) a. MonadError e m =&gt; e -&gt; m a
+</span><span class="hs-identifier hs-var">Except.throwError</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name -&gt; IncoherentDeclReason
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27MissingConstructorName"><span class="hs-identifier hs-var">IncoherentDeclReason'MissingConstructorName</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216781"><span class="hs-identifier hs-var">typeName</span></a></span><span class="hs-special">)</span><span class="hs-cpp">
+                #expectedConstructors .= expectedConstructors1
+</span><span>                </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT
+     DeclCoherencyCheckState (ExceptT IncoherentDeclReason m) ()
+</span><a href="#local-6989586621679216819"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216789"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; [a]
+</span><span class="hs-glyph hs-var">:</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216818"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216772"><span class="hs-identifier hs-var">child</span></a></span><span>
+</span><span id="line-196"></span><span>                </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-type">DeclCoherencyCheckState</span></a></span><span> </span><span class="hs-special">{</span><span id="local-6989586621679216768"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+expectedConstructors :: Map TypeReferenceId (Name, ConstructorNames)
+$sel:expectedConstructors:DeclCoherencyCheckState :: DeclCoherencyCheckState
+-&gt; Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216768"><span class="hs-identifier hs-var hs-var">expectedConstructors</span></a></span></span><span class="hs-special">}</span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *). MonadState s m =&gt; m s
+</span><span class="hs-identifier hs-var">State.get</span></span><span>
+</span><span id="line-197"></span><span>                </span><span class="hs-comment">-- fromJust is safe here because we upserted `typeRef` key above</span><span>
+</span><span id="line-198"></span><span>                </span><span class="hs-keyword">let</span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. HasCallStack =&gt; Maybe a -&gt; a
+</span><span class="hs-identifier hs-var">fromJust</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679216767"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216767"><span class="hs-identifier hs-var">_typeName</span></a></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216766"><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216766"><span class="hs-identifier hs-var">maybeConstructorNames</span></a></span></span><span class="hs-special">)</span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216765"><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216765"><span class="hs-identifier hs-var">expectedConstructors1</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-199"></span><span>                      </span><span class="annot"><span class="annottext">forall k v. Ord k =&gt; k -&gt; Map k v -&gt; (Maybe v, Map k v)
+</span><span class="hs-identifier hs-var">Map.deleteLookup</span></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216788"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="#local-6989586621679216768"><span class="hs-identifier hs-var">expectedConstructors</span></a></span><span>
+</span><span id="line-200"></span><span>                </span><span id="local-6989586621679216764"><span class="annot"><span class="annottext">[Name]
+</span><a href="#local-6989586621679216764"><span class="hs-identifier hs-var">constructorNames</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span>
+</span><span id="line-201"></span><span>                  </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (m :: * -&gt; *) a.
+(Traversable t, Monad m) =&gt;
+t (m a) -&gt; m (t a)
+</span><span class="hs-identifier hs-var">sequence</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. IntMap a -&gt; [a]
+</span><span class="hs-identifier hs-var">IntMap.elems</span></span><span> </span><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216766"><span class="hs-identifier hs-var">maybeConstructorNames</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">forall a b. a -&gt; (a -&gt; b) -&gt; b
+</span><span class="hs-operator hs-var">&amp;</span></span><span> </span><span class="annot"><span class="annottext">forall (m :: * -&gt; *) a. Applicative m =&gt; m a -&gt; Maybe a -&gt; m a
+</span><span class="hs-identifier hs-var">onNothing</span></span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-202"></span><span>                    </span><span class="annot"><span class="annottext">forall e (m :: * -&gt; *) a. MonadError e m =&gt; e -&gt; m a
+</span><span class="hs-identifier hs-var">Except.throwError</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Name -&gt; IncoherentDeclReason
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#IncoherentDeclReason%27MissingConstructorName"><span class="hs-identifier hs-var">IncoherentDeclReason'MissingConstructorName</span></a></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216781"><span class="hs-identifier hs-var">typeName</span></a></span><span class="hs-special">)</span><span class="hs-cpp">
+                #expectedConstructors .= expectedConstructors1
+</span><span class="hs-cpp">                #declNameLookup . #constructorToDecl %= \constructorToDecl -&gt;
+</span><span>                  </span><span class="hs-identifier">List.foldl'</span><span>
+</span><span id="line-206"></span><span>                    </span><span class="hs-special">(</span><span class="hs-glyph">\</span><span class="hs-identifier">acc</span><span> </span><span class="hs-identifier">constructorName</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-identifier">Map.insert</span><span> </span><span class="hs-identifier">constructorName</span><span> </span><span class="hs-identifier">typeName</span><span> </span><span class="hs-identifier">acc</span><span class="hs-special">)</span><span>
+</span><span id="line-207"></span><span>                    </span><span class="hs-identifier">constructorToDecl</span><span>
+</span><span id="line-208"></span><span>                    </span><span class="hs-identifier">constructorNames</span><span class="hs-cpp">
+                #declNameLookup . #declToConstructors %= Map.insert typeName constructorNames
+</span><span>                </span><span class="hs-identifier">pure</span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216789"><span class="hs-identifier hs-var">name</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-211"></span><span>            </span><span class="hs-keyword">where</span><span>
+</span><span id="line-212"></span><span>              </span><span id="local-6989586621679216781"><span class="annot"><span class="annottext">typeName :: Name
+</span><a href="#local-6989586621679216781"><span class="hs-identifier hs-var hs-var">typeName</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">NameSegment -&gt; Name
+</span><a href="#local-6989586621679216792"><span class="hs-identifier hs-var">fullName</span></a></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216789"><span class="hs-identifier hs-var">name</span></a></span><span>
+</span><span id="line-213"></span><span>
+</span><span id="line-214"></span><span>      </span><span class="hs-keyword">let</span><span> </span><span id="local-6989586621679216757"><span class="annot"><span class="annottext">childrenWeHaventGoneInto :: Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216757"><span class="hs-identifier hs-var hs-var">childrenWeHaventGoneInto</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216815"><span class="hs-identifier hs-var">children</span></a></span><span> </span><span class="annot"><span class="annottext">forall k a. Ord k =&gt; Map k a -&gt; Set k -&gt; Map k a
+</span><span class="hs-operator hs-var">`Map.withoutKeys`</span></span><span> </span><span class="annot"><span class="annottext">forall a. Ord a =&gt; [a] -&gt; Set a
+</span><span class="hs-identifier hs-var">Set.fromList</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216791"><span class="hs-identifier hs-var">childrenWeWentInto</span></a></span><span>
+</span><span id="line-215"></span><span>      </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Foldable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f b) -&gt; f ()
+</span><span class="hs-identifier hs-var">for_</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216757"><span class="hs-identifier hs-var">childrenWeHaventGoneInto</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-special">(</span><span id="local-6989586621679216754"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216754"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216753"><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216753"><span class="hs-identifier hs-var">child</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT
+     DeclCoherencyCheckState (ExceptT IncoherentDeclReason m) ()
+</span><a href="#local-6989586621679216819"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216754"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; [a]
+</span><span class="hs-glyph hs-var">:</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216818"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216753"><span class="hs-identifier hs-var">child</span></a></span><span>
+</span><span id="line-216"></span><span>      </span><span class="hs-keyword">where</span><span>
+</span><span id="line-217"></span><span>        </span><span id="local-6989586621679216792"><span class="annot"><span class="annottext">fullName :: NameSegment -&gt; Name
+</span><a href="#local-6989586621679216792"><span class="hs-identifier hs-var hs-var">fullName</span></a></span></span><span> </span><span id="local-6989586621679216752"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216752"><span class="hs-identifier hs-var">name</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-218"></span><span>          </span><span class="annot"><span class="annottext">NonEmpty NameSegment -&gt; Name
+</span><span class="hs-identifier hs-var">Name.fromReverseSegments</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216752"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; NonEmpty a
+</span><span class="hs-operator hs-var">:|</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216818"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-219"></span><span>
+</span><span id="line-220"></span><span class="hs-comment">-- | A lenient variant of 'checkDeclCoherency' - so lenient it can't even fail! It returns a mapping from decl name to</span><span>
+</span><span id="line-221"></span><span class="hs-comment">-- constructor names, where constructor names can be missing.</span><span>
+</span><span id="line-222"></span><span class="hs-comment">--</span><span>
+</span><span id="line-223"></span><span class="hs-comment">-- This function exists merely to extract a best-effort decl-name-to-constructor-name mapping for the LCA of a merge.</span><span>
+</span><span id="line-224"></span><span class="hs-comment">-- We require Alice and Bob to have coherent decls, but their LCA is out of the user's control and may have incoherent</span><span>
+</span><span id="line-225"></span><span class="hs-comment">-- decls, and whether or not it does, we still need to compute *some* syntactic hash for its decls.</span><span>
+</span><span id="line-226"></span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#lenientCheckDeclCoherency"><span class="hs-identifier hs-type">lenientCheckDeclCoherency</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-227"></span><span>  </span><span class="hs-keyword">forall</span><span> </span><span id="local-6989586621679217258"><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span></span><span class="hs-operator">.</span><span>
+</span><span id="line-228"></span><span>  </span><span class="annot"><span class="hs-identifier hs-type">Monad</span></span><span> </span><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-glyph">=&gt;</span><span>
+</span><span id="line-229"></span><span>  </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">TypeReferenceId</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Int</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-230"></span><span>  </span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">DefnsF</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReference</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-231"></span><span>  </span><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-special">[</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">]</span><span class="hs-special">)</span><span>
+</span><span id="line-232"></span><span id="lenientCheckDeclCoherency"><span class="annot"><span class="annottext">lenientCheckDeclCoherency :: forall (m :: * -&gt; *).
+Monad m =&gt;
+(TypeReferenceId -&gt; m Int)
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; m (Map Name [Maybe Name])
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#lenientCheckDeclCoherency"><span class="hs-identifier hs-var hs-var">lenientCheckDeclCoherency</span></a></span></span><span> </span><span id="local-6989586621679216566"><span class="annot"><span class="annottext">TypeReferenceId -&gt; m Int
+</span><a href="#local-6989586621679216566"><span class="hs-identifier hs-var">loadDeclNumConstructors</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-233"></span><span>  </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-identifier hs-var">fmap</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *) a. MonadReader s m =&gt; Getting a s a -&gt; m a
+</span><span class="hs-identifier hs-var">view</span></span><span> </span><span class="annot"><span class="annottext">forall a. IsLabel &quot;declToConstructors&quot; a =&gt; a
+</span><span class="">#declToConstructors</span></span><span class="hs-special">)</span><span>
+</span><span id="line-234"></span><span>    </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (m :: * -&gt; *) s a. Monad m =&gt; StateT s m a -&gt; s -&gt; m s
+</span><span class="hs-operator hs-var">`State.execStateT`</span></span><span> </span><span class="annot"><span class="annottext">Map TypeReferenceId (Map Name ConstructorNames)
+-&gt; Map Name [Maybe Name] -&gt; LenientDeclCoherencyCheckState
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#LenientDeclCoherencyCheckState"><span class="hs-identifier hs-var">LenientDeclCoherencyCheckState</span></a></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span class="hs-special">)</span><span>
+</span><span id="line-235"></span><span>    </span><span class="annot"><span class="annottext">forall b c a. (b -&gt; c) -&gt; (a -&gt; b) -&gt; a -&gt; c
+</span><span class="hs-operator hs-var">.</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT LenientDeclCoherencyCheckState m ()
+</span><a href="#local-6989586621679216564"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">[</span><span class="hs-special">]</span><span>
+</span><span id="line-236"></span><span>  </span><span class="hs-keyword">where</span><span>
+</span><span id="line-237"></span><span>    </span><span class="annot"><a href="#local-6989586621679216564"><span class="hs-identifier hs-type">go</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-238"></span><span>      </span><span class="hs-special">[</span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">]</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-239"></span><span>      </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">DefnsF</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">NameSegment</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReference</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-240"></span><span>      </span><span class="annot"><span class="hs-identifier hs-type">StateT</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#LenientDeclCoherencyCheckState"><span class="hs-identifier hs-type">LenientDeclCoherencyCheckState</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-241"></span><span>    </span><span id="local-6989586621679216564"><span class="annot"><span class="annottext">go :: [NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT LenientDeclCoherencyCheckState m ()
+</span><a href="#local-6989586621679216564"><span class="hs-identifier hs-var hs-var">go</span></a></span></span><span> </span><span id="local-6989586621679216563"><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216563"><span class="hs-identifier hs-var">prefix</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Nametree</span></span><span> </span><span id="local-6989586621679216562"><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216562"><span class="hs-identifier hs-var">defns</span></a></span></span><span> </span><span id="local-6989586621679216561"><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216561"><span class="hs-identifier hs-var">children</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-242"></span><span>      </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Foldable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f b) -&gt; f ()
+</span><span class="hs-identifier hs-var">for_</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216562"><span class="hs-identifier hs-var">defns</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">terms</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-243"></span><span>        </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Ref</span></span><span> </span><span class="annot"><span class="annottext">TypeReference
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-244"></span><span>        </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Con</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ReferenceBuiltin</span></span><span> </span><span class="annot"><span class="annottext">Text
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Word64
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">ConstructorType
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="hs-special">(</span><span class="hs-special">)</span><span>
+</span><span id="line-245"></span><span>        </span><span class="hs-special">(</span><span id="local-6989586621679216560"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216560"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Referent.Con</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ConstructorReference</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">ReferenceDerived</span></span><span> </span><span id="local-6989586621679216559"><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216559"><span class="hs-identifier hs-var">typeRef</span></a></span></span><span class="hs-special">)</span><span> </span><span id="local-6989586621679216558"><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216558"><span class="hs-identifier hs-var">conId</span></a></span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">ConstructorType
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span class="hs-cpp">
+          #expectedConstructors %= Map.adjust (Map.map (lenientRecordConstructorName conId (fullName name))) typeRef
+</span><span>
+</span><span id="line-248"></span><span>      </span><span id="local-6989586621679216553"><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216553"><span class="hs-identifier hs-var">childrenWeWentInto</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span>
+</span><span id="line-249"></span><span>        </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Witherable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f (Maybe b)) -&gt; f (t b)
+</span><span class="hs-identifier hs-var">forMaybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">DefnsF (Map NameSegment) Referent TypeReference
+</span><a href="#local-6989586621679216562"><span class="hs-identifier hs-var">defns</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">types</span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-250"></span><span>          </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><span class="hs-identifier">_</span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ReferenceBuiltin</span></span><span> </span><span class="annot"><span class="annottext">Text
+</span><span class="hs-identifier">_</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="annot"><span class="annottext">forall a. Maybe a
+</span><span class="hs-identifier hs-var">Nothing</span></span><span>
+</span><span id="line-251"></span><span>          </span><span class="hs-special">(</span><span id="local-6989586621679216552"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216552"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ReferenceDerived</span></span><span> </span><span id="local-6989586621679216551"><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216551"><span class="hs-identifier hs-var">typeRef</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-252"></span><span>            </span><span id="local-6989586621679216550"><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216550"><span class="hs-identifier hs-var">whatHappened</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-253"></span><span>              </span><span class="hs-keyword">let</span><span> </span><span class="annot"><a href="#local-6989586621679216549"><span class="hs-identifier hs-type">recordNewDecl</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><a href="#local-6989586621679217258"><span class="hs-identifier hs-type">m</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#WhatHappened"><span class="hs-identifier hs-type">WhatHappened</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-254"></span><span>                  </span><span id="local-6989586621679216549"><span class="annot"><span class="annottext">recordNewDecl :: m (WhatHappened (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216549"><span class="hs-identifier hs-var hs-var">recordNewDecl</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-255"></span><span>                    </span><span class="annot"><span class="annottext">TypeReferenceId -&gt; m Int
+</span><a href="#local-6989586621679216566"><span class="hs-identifier hs-var">loadDeclNumConstructors</span></a></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216551"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; f a -&gt; (a -&gt; b) -&gt; f b
+</span><span class="hs-operator hs-var">&lt;&amp;&gt;</span></span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-256"></span><span>                      </span><span class="annot"><span class="annottext">Int
+</span><span class="hs-number">0</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. WhatHappened a
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#UninhabitedDecl"><span class="hs-identifier hs-var">UninhabitedDecl</span></a></span><span>
+</span><span id="line-257"></span><span>                      </span><span id="local-6989586621679216548"><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216548"><span class="hs-identifier hs-var">n</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; WhatHappened a
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#InhabitedDecl"><span class="hs-identifier hs-var">InhabitedDecl</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. k -&gt; a -&gt; Map k a
+</span><span class="hs-identifier hs-var">Map.singleton</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216546"><span class="hs-identifier hs-var">typeName</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">Int -&gt; ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#emptyConstructorNames"><span class="hs-identifier hs-var">emptyConstructorNames</span></a></span><span> </span><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216548"><span class="hs-identifier hs-var">n</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-258"></span><span>              </span><span id="local-6989586621679216545"><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState
+</span><a href="#local-6989586621679216545"><span class="hs-identifier hs-var">state</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *). MonadState s m =&gt; m s
+</span><span class="hs-identifier hs-var">State.get</span></span><span>
+</span><span id="line-259"></span><span>              </span><span class="annot"><span class="annottext">forall (t :: (* -&gt; *) -&gt; * -&gt; *) (m :: * -&gt; *) a.
+(MonadTrans t, Monad m) =&gt;
+m a -&gt; t m a
+</span><span class="hs-identifier hs-var">lift</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall {k1} {k2} (f :: k1 -&gt; *) (g :: k2 -&gt; k1) (a :: k2).
+Compose f g a -&gt; f (g a)
+</span><span class="hs-identifier hs-var">getCompose</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) k v.
+(Functor f, Ord k) =&gt;
+(Maybe v -&gt; f v) -&gt; k -&gt; Map k v -&gt; f (Map k v)
+</span><span class="hs-identifier hs-var">Map.upsertF</span></span><span> </span><span class="hs-special">(</span><span class="hs-glyph">\</span><span class="annot"><span class="annottext">Maybe (Map Name ConstructorNames)
+</span><span class="hs-identifier">_</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall {k} {k1} (f :: k -&gt; *) (g :: k1 -&gt; k) (a :: k1).
+f (g a) -&gt; Compose f g a
+</span><span class="hs-identifier hs-var">Compose</span></span><span> </span><span class="annot"><span class="annottext">m (WhatHappened (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216549"><span class="hs-identifier hs-var">recordNewDecl</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216551"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState
+</span><a href="#local-6989586621679216545"><span class="hs-identifier hs-var">state</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">expectedConstructors</span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-260"></span><span>            </span><span class="hs-keyword">case</span><span> </span><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216550"><span class="hs-identifier hs-var">whatHappened</span></a></span><span> </span><span class="hs-keyword">of</span><span>
+</span><span id="line-261"></span><span>              </span><span class="annot"><span class="annottext">WhatHappened (Map TypeReferenceId (Map Name ConstructorNames))
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#UninhabitedDecl"><span class="hs-identifier hs-var">UninhabitedDecl</span></a></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span class="hs-cpp">
+                #declToConstructors %= Map.insert typeName []
+</span><span>                </span><span class="hs-identifier">pure</span><span> </span><span class="hs-identifier">Nothing</span><span>
+</span><span id="line-264"></span><span>              </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#InhabitedDecl"><span class="hs-identifier hs-type">InhabitedDecl</span></a></span><span> </span><span id="local-6989586621679216544"><span class="annot"><span class="annottext">Map TypeReferenceId (Map Name ConstructorNames)
+</span><a href="#local-6989586621679216544"><span class="hs-identifier hs-var">expectedConstructors1</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">do</span><span>
+</span><span id="line-265"></span><span>                </span><span class="hs-keyword">let</span><span> </span><span id="local-6989586621679216543"><span class="annot"><span class="annottext">child :: Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216543"><span class="hs-identifier hs-var hs-var">child</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall k a. Ord k =&gt; a -&gt; k -&gt; Map k a -&gt; a
+</span><span class="hs-identifier hs-var">Map.findWithDefault</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. a -&gt; Map NameSegment (Nametree a) -&gt; Nametree a
+</span><span class="hs-identifier hs-var">Nametree</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall terms types. terms -&gt; types -&gt; Defns terms types
+</span><span class="hs-identifier hs-var">Defns</span></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a
+</span><span class="hs-identifier hs-var">Map.empty</span></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216552"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216561"><span class="hs-identifier hs-var">children</span></a></span><span class="hs-cpp">
+                #expectedConstructors .= expectedConstructors1
+</span><span>                </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT LenientDeclCoherencyCheckState m ()
+</span><a href="#local-6989586621679216564"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216552"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; [a]
+</span><span class="hs-glyph hs-var">:</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216563"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216543"><span class="hs-identifier hs-var">child</span></a></span><span>
+</span><span id="line-268"></span><span>                </span><span id="local-6989586621679216540"><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState
+</span><a href="#local-6989586621679216540"><span class="hs-identifier hs-var">state</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="annot"><span class="annottext">forall s (m :: * -&gt; *). MonadState s m =&gt; m s
+</span><span class="hs-identifier hs-var">State.get</span></span><span>
+</span><span id="line-269"></span><span>                </span><span class="hs-keyword">let</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679216539"><span class="annot"><span class="annottext">ConstructorNames
+</span><a href="#local-6989586621679216539"><span class="hs-identifier hs-var">maybeConstructorNames</span></a></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216538"><span class="annot"><span class="annottext">Map TypeReferenceId (Map Name ConstructorNames)
+</span><a href="#local-6989586621679216538"><span class="hs-identifier hs-var">expectedConstructors</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-270"></span><span>                      </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) k a.
+(Functor f, Ord k) =&gt;
+(Maybe a -&gt; f (Maybe a)) -&gt; k -&gt; Map k a -&gt; f (Map k a)
+</span><span class="hs-identifier hs-var">Map.alterF</span></span><span> </span><span class="annot"><span class="annottext">Maybe (Map Name ConstructorNames)
+-&gt; (ConstructorNames, Maybe (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216536"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">TypeReferenceId
+</span><a href="#local-6989586621679216551"><span class="hs-identifier hs-var">typeRef</span></a></span><span> </span><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState
+</span><a href="#local-6989586621679216540"><span class="hs-identifier hs-var">state</span></a></span><span class="hs-operator">.</span><span class="hs-identifier">expectedConstructors</span><span>
+</span><span id="line-271"></span><span>                      </span><span class="hs-keyword">where</span><span>
+</span><span id="line-272"></span><span>                        </span><span class="annot"><a href="#local-6989586621679216536"><span class="hs-identifier hs-type">f</span></a></span><span> </span><span class="hs-glyph">::</span><span>
+</span><span id="line-273"></span><span>                          </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span>
+</span><span id="line-274"></span><span>                          </span><span class="hs-special">(</span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-275"></span><span>                        </span><span id="local-6989586621679216536"><span class="annot"><span class="annottext">f :: Maybe (Map Name ConstructorNames)
+-&gt; (ConstructorNames, Maybe (Map Name ConstructorNames))
+</span><a href="#local-6989586621679216536"><span class="hs-identifier hs-var hs-var">f</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-276"></span><span>                          </span><span class="hs-comment">-- fromJust is safe here because we upserted `typeRef` key above</span><span>
+</span><span id="line-277"></span><span>                          </span><span class="hs-comment">-- deleteLookupJust is safe here because we upserted `typeName` key above</span><span>
+</span><span id="line-278"></span><span>                          </span><span class="annot"><span class="annottext">forall a. HasCallStack =&gt; Maybe a -&gt; a
+</span><span class="hs-identifier hs-var">fromJust</span></span><span>
+</span><span id="line-279"></span><span>                            </span><span class="annot"><span class="annottext">forall {k} (cat :: k -&gt; k -&gt; *) (a :: k) (b :: k) (c :: k).
+Category cat =&gt;
+cat a b -&gt; cat b c -&gt; cat a c
+</span><span class="hs-operator hs-var">&gt;&gt;&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall k v. (HasCallStack, Ord k) =&gt; k -&gt; Map k v -&gt; (v, Map k v)
+</span><span class="hs-identifier hs-var">Map.deleteLookupJust</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216546"><span class="hs-identifier hs-var">typeName</span></a></span><span>
+</span><span id="line-280"></span><span>                            </span><span class="annot"><span class="annottext">forall {k} (cat :: k -&gt; k -&gt; *) (a :: k) (b :: k) (c :: k).
+Category cat =&gt;
+cat a b -&gt; cat b c -&gt; cat a c
+</span><span class="hs-operator hs-var">&gt;&gt;&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall s t a b. ASetter s t a b -&gt; (a -&gt; b) -&gt; s -&gt; t
+</span><span class="hs-identifier hs-var">over</span></span><span> </span><span class="annot"><span class="annottext">forall s t a b. Field2 s t a b =&gt; Lens s t a b
+</span><span class="hs-identifier hs-var">_2</span></span><span> </span><span class="hs-glyph">\</span><span id="local-6989586621679216533"><span class="annot"><span class="annottext">Map Name ConstructorNames
+</span><a href="#local-6989586621679216533"><span class="hs-identifier hs-var">m</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="hs-keyword">if</span><span> </span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; Bool
+</span><span class="hs-identifier hs-var">Map.null</span></span><span> </span><span class="annot"><span class="annottext">Map Name ConstructorNames
+</span><a href="#local-6989586621679216533"><span class="hs-identifier hs-var">m</span></a></span><span> </span><span class="hs-keyword">then</span><span> </span><span class="annot"><span class="annottext">forall a. Maybe a
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-keyword">else</span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">Map Name ConstructorNames
+</span><a href="#local-6989586621679216533"><span class="hs-identifier hs-var">m</span></a></span><span class="hs-cpp">
+                #expectedConstructors .= expectedConstructors
+</span><span class="hs-cpp">                #declToConstructors %= Map.insert typeName (IntMap.elems maybeConstructorNames)
+</span><span>                </span><span class="hs-identifier">pure</span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216552"><span class="hs-identifier hs-var">name</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-284"></span><span>            </span><span class="hs-keyword">where</span><span>
+</span><span id="line-285"></span><span>              </span><span id="local-6989586621679216546"><span class="annot"><span class="annottext">typeName :: Name
+</span><a href="#local-6989586621679216546"><span class="hs-identifier hs-var hs-var">typeName</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">NameSegment -&gt; Name
+</span><a href="#local-6989586621679216554"><span class="hs-identifier hs-var">fullName</span></a></span><span> </span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216552"><span class="hs-identifier hs-var">name</span></a></span><span>
+</span><span id="line-286"></span><span>
+</span><span id="line-287"></span><span>      </span><span class="hs-keyword">let</span><span> </span><span id="local-6989586621679216531"><span class="annot"><span class="annottext">childrenWeHaventGoneInto :: Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216531"><span class="hs-identifier hs-var hs-var">childrenWeHaventGoneInto</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216561"><span class="hs-identifier hs-var">children</span></a></span><span> </span><span class="annot"><span class="annottext">forall k a. Ord k =&gt; Map k a -&gt; Set k -&gt; Map k a
+</span><span class="hs-operator hs-var">`Map.withoutKeys`</span></span><span> </span><span class="annot"><span class="annottext">forall a. Ord a =&gt; [a] -&gt; Set a
+</span><span class="hs-identifier hs-var">Set.fromList</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216553"><span class="hs-identifier hs-var">childrenWeWentInto</span></a></span><span>
+</span><span id="line-288"></span><span>      </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Foldable t, Applicative f) =&gt;
+t a -&gt; (a -&gt; f b) -&gt; f ()
+</span><span class="hs-identifier hs-var">for_</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall k a. Map k a -&gt; [(k, a)]
+</span><span class="hs-identifier hs-var">Map.toList</span></span><span> </span><span class="annot"><span class="annottext">Map
+  NameSegment
+  (Nametree (DefnsF (Map NameSegment) Referent TypeReference))
+</span><a href="#local-6989586621679216531"><span class="hs-identifier hs-var">childrenWeHaventGoneInto</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">\</span><span class="hs-special">(</span><span id="local-6989586621679216530"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216530"><span class="hs-identifier hs-var">name</span></a></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216529"><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216529"><span class="hs-identifier hs-var">child</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+-&gt; Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+-&gt; StateT LenientDeclCoherencyCheckState m ()
+</span><a href="#local-6989586621679216564"><span class="hs-identifier hs-var">go</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216530"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; [a]
+</span><span class="hs-glyph hs-var">:</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216563"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><span class="annottext">Nametree (DefnsF (Map NameSegment) Referent TypeReference)
+</span><a href="#local-6989586621679216529"><span class="hs-identifier hs-var">child</span></a></span><span>
+</span><span id="line-289"></span><span>      </span><span class="hs-keyword">where</span><span>
+</span><span id="line-290"></span><span>        </span><span id="local-6989586621679216554"><span class="annot"><span class="annottext">fullName :: NameSegment -&gt; Name
+</span><a href="#local-6989586621679216554"><span class="hs-identifier hs-var hs-var">fullName</span></a></span></span><span> </span><span id="local-6989586621679216528"><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216528"><span class="hs-identifier hs-var">name</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-291"></span><span>          </span><span class="annot"><span class="annottext">NonEmpty NameSegment -&gt; Name
+</span><span class="hs-identifier hs-var">Name.fromReverseSegments</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">NameSegment
+</span><a href="#local-6989586621679216528"><span class="hs-identifier hs-var">name</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; [a] -&gt; NonEmpty a
+</span><span class="hs-operator hs-var">:|</span></span><span> </span><span class="annot"><span class="annottext">[NameSegment]
+</span><a href="#local-6989586621679216563"><span class="hs-identifier hs-var">prefix</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-292"></span><span>
+</span><span id="line-293"></span><span id="local-6989586621679216526"><span id="local-6989586621679216527"></span></span><span class="hs-keyword">data</span><span> </span><span id="DeclCoherencyCheckState"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-var">DeclCoherencyCheckState</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="DeclCoherencyCheckState"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#DeclCoherencyCheckState"><span class="hs-identifier hs-var">DeclCoherencyCheckState</span></a></span></span><span>
+</span><span id="line-294"></span><span>  </span><span class="hs-special">{</span><span> </span><span id="%24sel%3AexpectedConstructors%3ADeclCoherencyCheckState"><span class="annot"><span class="annottext">DeclCoherencyCheckState
+-&gt; Map TypeReferenceId (Name, ConstructorNames)
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#%24sel%3AexpectedConstructors%3ADeclCoherencyCheckState"><span class="hs-identifier hs-var hs-var">expectedConstructors</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-glyph">!</span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReferenceId</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">,</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span class="hs-special">,</span><span>
+</span><span id="line-295"></span><span>    </span><span id="%24sel%3AdeclNameLookup%3ADeclCoherencyCheckState"><span class="annot"><span class="annottext">DeclCoherencyCheckState -&gt; DeclNameLookup
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#%24sel%3AdeclNameLookup%3ADeclCoherencyCheckState"><span class="hs-identifier hs-var hs-var">declNameLookup</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-glyph">!</span><span class="annot"><a href="Unison.Merge.DeclNameLookup.html#DeclNameLookup"><span class="hs-identifier hs-type">DeclNameLookup</span></a></span><span>
+</span><span id="line-296"></span><span>  </span><span class="hs-special">}</span><span>
+</span><span id="line-297"></span><span>  </span><span class="hs-keyword">deriving</span><span> </span><span class="annot"><span class="hs-keyword">stock</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall x. Rep DeclCoherencyCheckState x -&gt; DeclCoherencyCheckState
+forall x. DeclCoherencyCheckState -&gt; Rep DeclCoherencyCheckState x
+forall a.
+(forall x. a -&gt; Rep a x) -&gt; (forall x. Rep a x -&gt; a) -&gt; Generic a
+$cto :: forall x. Rep DeclCoherencyCheckState x -&gt; DeclCoherencyCheckState
+$cfrom :: forall x. DeclCoherencyCheckState -&gt; Rep DeclCoherencyCheckState x
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var">Generic</span></span><span class="hs-special">)</span><span>
+</span><span id="line-298"></span><span>
+</span><span id="line-299"></span><span id="local-6989586621679216520"><span id="local-6989586621679216521"></span></span><span class="hs-keyword">data</span><span> </span><span id="LenientDeclCoherencyCheckState"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#LenientDeclCoherencyCheckState"><span class="hs-identifier hs-var">LenientDeclCoherencyCheckState</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LenientDeclCoherencyCheckState"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#LenientDeclCoherencyCheckState"><span class="hs-identifier hs-var">LenientDeclCoherencyCheckState</span></a></span></span><span>
+</span><span id="line-300"></span><span>  </span><span class="hs-special">{</span><span> </span><span id="%24sel%3AexpectedConstructors%3ALenientDeclCoherencyCheckState"><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState
+-&gt; Map TypeReferenceId (Map Name ConstructorNames)
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#%24sel%3AexpectedConstructors%3ALenientDeclCoherencyCheckState"><span class="hs-identifier hs-var hs-var">expectedConstructors</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-glyph">!</span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">TypeReferenceId</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span class="hs-special">,</span><span>
+</span><span id="line-301"></span><span>    </span><span id="%24sel%3AdeclToConstructors%3ALenientDeclCoherencyCheckState"><span class="annot"><span class="annottext">LenientDeclCoherencyCheckState -&gt; Map Name [Maybe Name]
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#%24sel%3AdeclToConstructors%3ALenientDeclCoherencyCheckState"><span class="hs-identifier hs-var hs-var">declToConstructors</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="hs-glyph">!</span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Map</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-special">[</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">]</span><span class="hs-special">)</span><span>
+</span><span id="line-302"></span><span>  </span><span class="hs-special">}</span><span>
+</span><span id="line-303"></span><span>  </span><span class="hs-keyword">deriving</span><span> </span><span class="annot"><span class="hs-keyword">stock</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall x.
+Rep LenientDeclCoherencyCheckState x
+-&gt; LenientDeclCoherencyCheckState
+forall x.
+LenientDeclCoherencyCheckState
+-&gt; Rep LenientDeclCoherencyCheckState x
+forall a.
+(forall x. a -&gt; Rep a x) -&gt; (forall x. Rep a x -&gt; a) -&gt; Generic a
+$cto :: forall x.
+Rep LenientDeclCoherencyCheckState x
+-&gt; LenientDeclCoherencyCheckState
+$cfrom :: forall x.
+LenientDeclCoherencyCheckState
+-&gt; Rep LenientDeclCoherencyCheckState x
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var">Generic</span></span><span class="hs-special">)</span><span>
+</span><span id="line-304"></span><span>
+</span><span id="line-305"></span><span class="hs-comment">-- A partial mapping from constructor id to name; a collection of constructor names starts out with the correct number</span><span>
+</span><span id="line-306"></span><span class="hs-comment">-- of keys (per the number of data constructors) all mapped to Nothing. Then, as names are discovered by walking a</span><span>
+</span><span id="line-307"></span><span class="hs-comment">-- name tree, Nothings become Justs.</span><span>
+</span><span id="line-308"></span><span class="hs-keyword">type</span><span> </span><span id="ConstructorNames"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-var">ConstructorNames</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-309"></span><span>  </span><span class="annot"><span class="hs-identifier hs-type">IntMap</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">)</span><span>
+</span><span id="line-310"></span><span>
+</span><span id="line-311"></span><span class="hs-comment">-- Make an empty set of constructor names given the number of constructors.</span><span>
+</span><span id="line-312"></span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#emptyConstructorNames"><span class="hs-identifier hs-type">emptyConstructorNames</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Int</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span>
+</span><span id="line-313"></span><span id="emptyConstructorNames"><span class="annot"><span class="annottext">emptyConstructorNames :: Int -&gt; ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#emptyConstructorNames"><span class="hs-identifier hs-var hs-var">emptyConstructorNames</span></a></span></span><span> </span><span id="local-6989586621679216515"><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216515"><span class="hs-identifier hs-var">numConstructors</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-314"></span><span>  </span><span class="annot"><span class="annottext">forall a. [(Int, a)] -&gt; IntMap a
+</span><span class="hs-identifier hs-var">IntMap.fromAscList</span></span><span> </span><span class="hs-special">[</span><span class="hs-special">(</span><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216513"><span class="hs-identifier hs-var">i</span></a></span><span class="hs-special">,</span><span> </span><span class="annot"><span class="annottext">forall a. Maybe a
+</span><span class="hs-identifier hs-var">Nothing</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">|</span><span> </span><span id="local-6989586621679216513"><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216513"><span class="hs-identifier hs-var">i</span></a></span></span><span> </span><span class="hs-glyph">&lt;-</span><span> </span><span class="hs-special">[</span><span class="annot"><span class="annottext">Int
+</span><span class="hs-number">0</span></span><span> </span><span class="hs-glyph">..</span><span> </span><span class="annot"><span class="annottext">Int
+</span><a href="#local-6989586621679216515"><span class="hs-identifier hs-var">numConstructors</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. Num a =&gt; a -&gt; a -&gt; a
+</span><span class="hs-glyph hs-var">-</span></span><span> </span><span class="annot"><span class="annottext">Int
+</span><span class="hs-number">1</span></span><span class="hs-special">]</span><span class="hs-special">]</span><span>
+</span><span id="line-315"></span><span>
+</span><span id="line-316"></span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#recordConstructorName"><span class="hs-identifier hs-type">recordConstructorName</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">HasCallStack</span></span><span> </span><span class="hs-glyph">=&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ConstructorId</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Either</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span>
+</span><span id="line-317"></span><span id="recordConstructorName"><span class="annot"><span class="annottext">recordConstructorName :: HasCallStack =&gt;
+Word64 -&gt; Name -&gt; ConstructorNames -&gt; Either Name ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#recordConstructorName"><span class="hs-identifier hs-var hs-var">recordConstructorName</span></a></span></span><span> </span><span id="local-6989586621679216501"><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216501"><span class="hs-identifier hs-var">conId</span></a></span></span><span> </span><span id="local-6989586621679216500"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216500"><span class="hs-identifier hs-var">conName</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-318"></span><span>  </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a.
+Functor f =&gt;
+(Maybe a -&gt; f (Maybe a)) -&gt; Int -&gt; IntMap a -&gt; f (IntMap a)
+</span><span class="hs-identifier hs-var">IntMap.alterF</span></span><span> </span><span class="annot"><span class="annottext">Maybe (Maybe Name) -&gt; Either Name (Maybe (Maybe Name))
+</span><a href="#local-6989586621679216498"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a b. (Integral a, Num b) =&gt; a -&gt; b
+</span><span class="hs-identifier hs-var">fromIntegral</span></span><span> </span><span class="hs-glyph">@</span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-glyph">@</span><span class="annot"><span class="hs-identifier hs-type">Int</span></span><span> </span><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216501"><span class="hs-identifier hs-var">conId</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-319"></span><span>  </span><span class="hs-keyword">where</span><span>
+</span><span id="line-320"></span><span>    </span><span class="annot"><a href="#local-6989586621679216498"><span class="hs-identifier hs-type">f</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Either</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-321"></span><span>    </span><span id="local-6989586621679216498"><span class="annot"><span class="annottext">f :: Maybe (Maybe Name) -&gt; Either Name (Maybe (Maybe Name))
+</span><a href="#local-6989586621679216498"><span class="hs-identifier hs-var hs-var">f</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-322"></span><span>      </span><span class="annot"><span class="annottext">Maybe (Maybe Name)
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. HasCallStack =&gt; [Char] -&gt; a
+</span><span class="hs-identifier hs-var">error</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">[Char] -&gt; [Char] -&gt; [Char]
+</span><span class="hs-identifier hs-var">reportBug</span></span><span> </span><span class="annot"><span class="annottext">[Char]
+</span><span class="hs-string">&quot;E397219&quot;</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">[Char]
+</span><span class="hs-string">&quot;recordConstructorName: didn't expect constructor id &quot;</span></span><span> </span><span class="annot"><span class="annottext">forall a. [a] -&gt; [a] -&gt; [a]
+</span><span class="hs-operator hs-var">++</span></span><span> </span><span class="annot"><span class="annottext">forall a. Show a =&gt; a -&gt; [Char]
+</span><span class="hs-identifier hs-var">show</span></span><span> </span><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216501"><span class="hs-identifier hs-var">conId</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-323"></span><span>      </span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span class="annot"><span class="annottext">Maybe Name
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a b. b -&gt; Either a b
+</span><span class="hs-identifier hs-var">Right</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216500"><span class="hs-identifier hs-var">conName</span></a></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-324"></span><span>      </span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span id="local-6989586621679216494"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216494"><span class="hs-identifier hs-var">existingName</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a b. a -&gt; Either a b
+</span><span class="hs-identifier hs-var">Left</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216494"><span class="hs-identifier hs-var">existingName</span></a></span><span>
+</span><span id="line-325"></span><span>
+</span><span id="line-326"></span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#lenientRecordConstructorName"><span class="hs-identifier hs-type">lenientRecordConstructorName</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">ConstructorId</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#ConstructorNames"><span class="hs-identifier hs-type">ConstructorNames</span></a></span><span>
+</span><span id="line-327"></span><span id="lenientRecordConstructorName"><span class="annot"><span class="annottext">lenientRecordConstructorName :: Word64 -&gt; Name -&gt; ConstructorNames -&gt; ConstructorNames
+</span><a href="Unison.Merge.DeclCoherencyCheck.html#lenientRecordConstructorName"><span class="hs-identifier hs-var hs-var">lenientRecordConstructorName</span></a></span></span><span> </span><span id="local-6989586621679216493"><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216493"><span class="hs-identifier hs-var">conId</span></a></span></span><span> </span><span id="local-6989586621679216492"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216492"><span class="hs-identifier hs-var">conName</span></a></span></span><span> </span><span class="hs-glyph">=</span><span>
+</span><span id="line-328"></span><span>  </span><span class="annot"><span class="annottext">forall a. (a -&gt; a) -&gt; Int -&gt; IntMap a -&gt; IntMap a
+</span><span class="hs-identifier hs-var">IntMap.adjust</span></span><span> </span><span class="annot"><span class="annottext">Maybe Name -&gt; Maybe Name
+</span><a href="#local-6989586621679216490"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">forall a b. (Integral a, Num b) =&gt; a -&gt; b
+</span><span class="hs-identifier hs-var">fromIntegral</span></span><span> </span><span class="hs-glyph">@</span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-glyph">@</span><span class="annot"><span class="hs-identifier hs-type">Int</span></span><span> </span><span class="annot"><span class="annottext">Word64
+</span><a href="#local-6989586621679216493"><span class="hs-identifier hs-var">conId</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-329"></span><span>  </span><span class="hs-keyword">where</span><span>
+</span><span id="line-330"></span><span>    </span><span class="annot"><a href="#local-6989586621679216490"><span class="hs-identifier hs-type">f</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Maybe</span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Name</span></span><span>
+</span><span id="line-331"></span><span>    </span><span id="local-6989586621679216490"><span class="annot"><span class="annottext">f :: Maybe Name -&gt; Maybe Name
+</span><a href="#local-6989586621679216490"><span class="hs-identifier hs-var hs-var">f</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="hs-glyph">\</span><span class="hs-glyph">case</span><span>
+</span><span id="line-332"></span><span>      </span><span class="annot"><span class="annottext">Maybe Name
+</span><span class="hs-identifier hs-var">Nothing</span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216492"><span class="hs-identifier hs-var">conName</span></a></span><span>
+</span><span id="line-333"></span><span>      </span><span class="hs-comment">-- Ignore constructor alias, just keep first name we found</span><span>
+</span><span id="line-334"></span><span>      </span><span class="annot"><span class="hs-identifier hs-type">Just</span></span><span> </span><span id="local-6989586621679216489"><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216489"><span class="hs-identifier hs-var">existingName</span></a></span></span><span> </span><span class="hs-glyph">-&gt;</span><span> </span><span class="annot"><span class="annottext">forall a. a -&gt; Maybe a
+</span><span class="hs-identifier hs-var">Just</span></span><span> </span><span class="annot"><span class="annottext">Name
+</span><a href="#local-6989586621679216489"><span class="hs-identifier hs-var">existingName</span></a></span><span>
+</span><span id="line-335"></span><span>
+</span><span id="line-336"></span><span class="hs-keyword">data</span><span> </span><span id="WhatHappened"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#WhatHappened"><span class="hs-identifier hs-var">WhatHappened</span></a></span></span><span> </span><span id="local-6989586621679217291"><span class="annot"><a href="#local-6989586621679217291"><span class="hs-identifier hs-type">a</span></a></span></span><span>
+</span><span id="line-337"></span><span>  </span><span class="hs-glyph">=</span><span> </span><span id="UninhabitedDecl"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#UninhabitedDecl"><span class="hs-identifier hs-var">UninhabitedDecl</span></a></span></span><span>
+</span><span id="line-338"></span><span>  </span><span class="hs-glyph">|</span><span> </span><span id="InhabitedDecl"><span class="annot"><a href="Unison.Merge.DeclCoherencyCheck.html#InhabitedDecl"><span class="hs-identifier hs-var">InhabitedDecl</span></a></span></span><span> </span><span class="hs-glyph">!</span><span class="annot"><a href="#local-6989586621679217291"><span class="hs-identifier hs-type">a</span></a></span><span>
+</span><span id="line-339"></span><span>  </span><span class="hs-keyword">deriving</span><span> </span><span class="annot"><span class="hs-keyword">stock</span></span><span> </span><span class="hs-special">(</span><span id="local-6989586621679216485"><span id="local-6989586621679216487"><span class="annot"><span class="annottext">forall a b. a -&gt; WhatHappened b -&gt; WhatHappened a
+forall a b. (a -&gt; b) -&gt; WhatHappened a -&gt; WhatHappened b
+forall (f :: * -&gt; *).
+(forall a b. (a -&gt; b) -&gt; f a -&gt; f b)
+-&gt; (forall a b. a -&gt; f b -&gt; f a) -&gt; Functor f
+&lt;$ :: forall a b. a -&gt; WhatHappened b -&gt; WhatHappened a
+$c&lt;$ :: forall a b. a -&gt; WhatHappened b -&gt; WhatHappened a
+fmap :: forall a b. (a -&gt; b) -&gt; WhatHappened a -&gt; WhatHappened b
+$cfmap :: forall a b. (a -&gt; b) -&gt; WhatHappened a -&gt; WhatHappened b
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Functor</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679216475"><span id="local-6989586621679216477"><span id="local-6989586621679216482"><span class="annot"><span class="annottext">Int -&gt; WhatHappened a -&gt; [Char] -&gt; [Char]
+forall a. Show a =&gt; Int -&gt; WhatHappened a -&gt; [Char] -&gt; [Char]
+forall a. Show a =&gt; [WhatHappened a] -&gt; [Char] -&gt; [Char]
+forall a. Show a =&gt; WhatHappened a -&gt; [Char]
+forall a.
+(Int -&gt; a -&gt; [Char] -&gt; [Char])
+-&gt; (a -&gt; [Char]) -&gt; ([a] -&gt; [Char] -&gt; [Char]) -&gt; Show a
+showList :: [WhatHappened a] -&gt; [Char] -&gt; [Char]
+$cshowList :: forall a. Show a =&gt; [WhatHappened a] -&gt; [Char] -&gt; [Char]
+show :: WhatHappened a -&gt; [Char]
+$cshow :: forall a. Show a =&gt; WhatHappened a -&gt; [Char]
+showsPrec :: Int -&gt; WhatHappened a -&gt; [Char] -&gt; [Char]
+$cshowsPrec :: forall a. Show a =&gt; Int -&gt; WhatHappened a -&gt; [Char] -&gt; [Char]
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">)</span><span>
+</span><span id="line-340"></span></pre></body></html>

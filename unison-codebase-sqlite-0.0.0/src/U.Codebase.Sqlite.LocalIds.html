@@ -1,0 +1,1482 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd"><html xmlns="http://www.w3.org/1999/xhtml"><head><link rel="stylesheet" type="text/css" href="style.css" /><script type="text/javascript" src="highlight.js"></script></head><body><pre><span class="hs-pragma">{-# LANGUAGE DerivingVia #-}</span><span>
+</span><span id="line-2"></span><span>
+</span><span id="line-3"></span><span class="hs-keyword">module</span><span> </span><span class="hs-identifier">U.Codebase.Sqlite.LocalIds</span><span> </span><span class="hs-keyword">where</span><span>
+</span><span id="line-4"></span><span>
+</span><span id="line-5"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Control.Lens</span></span><span>
+</span><span id="line-6"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Bifoldable</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Bifoldable</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">bifoldMap</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-7"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Bitraversable</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Bitraversable</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">bitraverse</span></span><span class="hs-special">)</span><span class="hs-special">)</span><span>
+</span><span id="line-8"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Bits</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Bits</span></span><span class="hs-special">)</span><span>
+</span><span id="line-9"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Vector</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Vector</span></span><span class="hs-special">)</span><span>
+</span><span id="line-10"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><span class="hs-identifier">Data.Word</span></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="hs-identifier">Word64</span></span><span class="hs-special">)</span><span>
+</span><span id="line-11"></span><span class="hs-keyword">import</span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.DbId.html"><span class="hs-identifier">U.Codebase.Sqlite.DbId</span></a></span><span>
+</span><span id="line-12"></span><span>
+</span><span id="line-13"></span><span class="hs-comment">-- | A mapping between index ids that are local to an object and the ids in the database</span><span>
+</span><span id="line-14"></span><span class="hs-keyword">data</span><span> </span><span id="LocalIds%27"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-var">LocalIds'</span></a></span></span><span> </span><span id="local-6989586621679576467"><span class="annot"><a href="#local-6989586621679576467"><span class="hs-identifier hs-type">t</span></a></span></span><span> </span><span id="local-6989586621679576466"><span class="annot"><a href="#local-6989586621679576466"><span class="hs-identifier hs-type">h</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalIds"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span></span><span>
+</span><span id="line-15"></span><span>  </span><span class="hs-special">{</span><span> </span><span id="%24sel%3AtextLookup%3ALocalIds"><span class="annot"><span class="annottext">forall t h. LocalIds' t h -&gt; Vector t
+</span><a href="U.Codebase.Sqlite.LocalIds.html#%24sel%3AtextLookup%3ALocalIds"><span class="hs-identifier hs-var hs-var">textLookup</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Vector</span></span><span> </span><span class="annot"><a href="#local-6989586621679576467"><span class="hs-identifier hs-type">t</span></a></span><span class="hs-special">,</span><span>
+</span><span id="line-16"></span><span>    </span><span id="%24sel%3AdefnLookup%3ALocalIds"><span class="annot"><span class="annottext">forall t h. LocalIds' t h -&gt; Vector h
+</span><a href="U.Codebase.Sqlite.LocalIds.html#%24sel%3AdefnLookup%3ALocalIds"><span class="hs-identifier hs-var hs-var">defnLookup</span></a></span></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Vector</span></span><span> </span><span class="annot"><a href="#local-6989586621679576466"><span class="hs-identifier hs-type">h</span></a></span><span>
+</span><span id="line-17"></span><span>  </span><span class="hs-special">}</span><span>
+</span><span id="line-18"></span><span>  </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679576342"><span id="local-6989586621679576344"><span id="local-6989586621679576351"><span class="annot"><span class="annottext">Int -&gt; LocalIds' t h -&gt; ShowS
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+forall t h. (Show t, Show h) =&gt; Int -&gt; LocalIds' t h -&gt; ShowS
+forall t h. (Show t, Show h) =&gt; [LocalIds' t h] -&gt; ShowS
+forall t h. (Show t, Show h) =&gt; LocalIds' t h -&gt; String
+showList :: [LocalIds' t h] -&gt; ShowS
+$cshowList :: forall t h. (Show t, Show h) =&gt; [LocalIds' t h] -&gt; ShowS
+show :: LocalIds' t h -&gt; String
+$cshow :: forall t h. (Show t, Show h) =&gt; LocalIds' t h -&gt; String
+showsPrec :: Int -&gt; LocalIds' t h -&gt; ShowS
+$cshowsPrec :: forall t h. (Show t, Show h) =&gt; Int -&gt; LocalIds' t h -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">)</span><span>
+</span><span id="line-19"></span><span>
+</span><span id="line-20"></span><span class="hs-keyword">type</span><span> </span><span id="LocalIds"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.DbId.html#TextId"><span class="hs-identifier hs-type">TextId</span></a></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.DbId.html#ObjectId"><span class="hs-identifier hs-type">ObjectId</span></a></span><span>
+</span><span id="line-21"></span><span>
+</span><span id="line-22"></span><span class="hs-keyword">type</span><span> </span><span id="WatchLocalIds"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#WatchLocalIds"><span class="hs-identifier hs-var">WatchLocalIds</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.DbId.html#TextId"><span class="hs-identifier hs-type">TextId</span></a></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.DbId.html#HashId"><span class="hs-identifier hs-type">HashId</span></a></span><span>
+</span><span id="line-23"></span><span>
+</span><span id="line-24"></span><span class="hs-comment">-- | represents an index into a textLookup</span><span>
+</span><span id="line-25"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalTextId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalTextId"><span class="hs-identifier hs-var">LocalTextId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalTextId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalTextId"><span class="hs-identifier hs-var">LocalTextId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679576328"><span id="local-6989586621679576333"><span class="annot"><span class="annottext">LocalTextId -&gt; LocalTextId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c/= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+== :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c== :: LocalTextId -&gt; LocalTextId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576295"><span id="local-6989586621679576299"><span id="local-6989586621679576303"><span id="local-6989586621679576307"><span id="local-6989586621679576311"><span id="local-6989586621679576315"><span id="local-6989586621679576320"><span class="annot"><span class="annottext">Eq LocalTextId
+LocalTextId -&gt; LocalTextId -&gt; Bool
+LocalTextId -&gt; LocalTextId -&gt; Ordering
+LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cmin :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+max :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cmax :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+&gt;= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c&gt;= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+&gt; :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c&gt; :: LocalTextId -&gt; LocalTextId -&gt; Bool
+&lt;= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c&lt;= :: LocalTextId -&gt; LocalTextId -&gt; Bool
+&lt; :: LocalTextId -&gt; LocalTextId -&gt; Bool
+$c&lt; :: LocalTextId -&gt; LocalTextId -&gt; Bool
+compare :: LocalTextId -&gt; LocalTextId -&gt; Ordering
+$ccompare :: LocalTextId -&gt; LocalTextId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576280"><span id="local-6989586621679576284"><span id="local-6989586621679576289"><span class="annot"><span class="annottext">Int -&gt; LocalTextId -&gt; ShowS
+[LocalTextId] -&gt; ShowS
+LocalTextId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalTextId] -&gt; ShowS
+$cshowList :: [LocalTextId] -&gt; ShowS
+show :: LocalTextId -&gt; String
+$cshow :: LocalTextId -&gt; String
+showsPrec :: Int -&gt; LocalTextId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalTextId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576250"><span id="local-6989586621679576254"><span id="local-6989586621679576258"><span id="local-6989586621679576262"><span id="local-6989586621679576266"><span id="local-6989586621679576270"><span id="local-6989586621679576275"><span class="annot"><span class="annottext">Integer -&gt; LocalTextId
+LocalTextId -&gt; LocalTextId
+LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalTextId
+$cfromInteger :: Integer -&gt; LocalTextId
+signum :: LocalTextId -&gt; LocalTextId
+$csignum :: LocalTextId -&gt; LocalTextId
+abs :: LocalTextId -&gt; LocalTextId
+$cabs :: LocalTextId -&gt; LocalTextId
+negate :: LocalTextId -&gt; LocalTextId
+$cnegate :: LocalTextId -&gt; LocalTextId
+* :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$c* :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+- :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$c- :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
++ :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$c+ :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576240"><span class="annot"><span class="annottext">Num LocalTextId
+Ord LocalTextId
+LocalTextId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalTextId -&gt; Rational
+$ctoRational :: LocalTextId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576204"><span id="local-6989586621679576208"><span id="local-6989586621679576212"><span id="local-6989586621679576216"><span id="local-6989586621679576220"><span id="local-6989586621679576224"><span id="local-6989586621679576228"><span id="local-6989586621679576233"><span class="annot"><span class="annottext">Int -&gt; LocalTextId
+LocalTextId -&gt; Int
+LocalTextId -&gt; [LocalTextId]
+LocalTextId -&gt; LocalTextId
+LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+LocalTextId -&gt; LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+$cenumFromThenTo :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+enumFromTo :: LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+$cenumFromTo :: LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+enumFromThen :: LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+$cenumFromThen :: LocalTextId -&gt; LocalTextId -&gt; [LocalTextId]
+enumFrom :: LocalTextId -&gt; [LocalTextId]
+$cenumFrom :: LocalTextId -&gt; [LocalTextId]
+fromEnum :: LocalTextId -&gt; Int
+$cfromEnum :: LocalTextId -&gt; Int
+toEnum :: Int -&gt; LocalTextId
+$ctoEnum :: Int -&gt; LocalTextId
+pred :: LocalTextId -&gt; LocalTextId
+$cpred :: LocalTextId -&gt; LocalTextId
+succ :: LocalTextId -&gt; LocalTextId
+$csucc :: LocalTextId -&gt; LocalTextId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576169"><span id="local-6989586621679576173"><span id="local-6989586621679576177"><span id="local-6989586621679576181"><span id="local-6989586621679576185"><span id="local-6989586621679576189"><span id="local-6989586621679576194"><span class="annot"><span class="annottext">Enum LocalTextId
+Real LocalTextId
+LocalTextId -&gt; Integer
+LocalTextId -&gt; LocalTextId -&gt; (LocalTextId, LocalTextId)
+LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalTextId -&gt; Integer
+$ctoInteger :: LocalTextId -&gt; Integer
+divMod :: LocalTextId -&gt; LocalTextId -&gt; (LocalTextId, LocalTextId)
+$cdivMod :: LocalTextId -&gt; LocalTextId -&gt; (LocalTextId, LocalTextId)
+quotRem :: LocalTextId -&gt; LocalTextId -&gt; (LocalTextId, LocalTextId)
+$cquotRem :: LocalTextId -&gt; LocalTextId -&gt; (LocalTextId, LocalTextId)
+mod :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cmod :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+div :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cdiv :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+rem :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$crem :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+quot :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cquot :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576076"><span id="local-6989586621679576080"><span id="local-6989586621679576084"><span id="local-6989586621679576088"><span id="local-6989586621679576092"><span id="local-6989586621679576096"><span id="local-6989586621679576100"><span id="local-6989586621679576104"><span id="local-6989586621679576108"><span id="local-6989586621679576112"><span id="local-6989586621679576116"><span id="local-6989586621679576120"><span id="local-6989586621679576124"><span id="local-6989586621679576128"><span id="local-6989586621679576132"><span id="local-6989586621679576136"><span id="local-6989586621679576140"><span id="local-6989586621679576144"><span id="local-6989586621679576148"><span id="local-6989586621679576152"><span id="local-6989586621679576156"><span id="local-6989586621679576161"><span class="annot"><span class="annottext">Eq LocalTextId
+LocalTextId
+Int -&gt; LocalTextId
+LocalTextId -&gt; Bool
+LocalTextId -&gt; Int
+LocalTextId -&gt; Maybe Int
+LocalTextId -&gt; LocalTextId
+LocalTextId -&gt; Int -&gt; Bool
+LocalTextId -&gt; Int -&gt; LocalTextId
+LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalTextId -&gt; Int
+$cpopCount :: LocalTextId -&gt; Int
+rotateR :: LocalTextId -&gt; Int -&gt; LocalTextId
+$crotateR :: LocalTextId -&gt; Int -&gt; LocalTextId
+rotateL :: LocalTextId -&gt; Int -&gt; LocalTextId
+$crotateL :: LocalTextId -&gt; Int -&gt; LocalTextId
+unsafeShiftR :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cunsafeShiftR :: LocalTextId -&gt; Int -&gt; LocalTextId
+shiftR :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cshiftR :: LocalTextId -&gt; Int -&gt; LocalTextId
+unsafeShiftL :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cunsafeShiftL :: LocalTextId -&gt; Int -&gt; LocalTextId
+shiftL :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cshiftL :: LocalTextId -&gt; Int -&gt; LocalTextId
+isSigned :: LocalTextId -&gt; Bool
+$cisSigned :: LocalTextId -&gt; Bool
+bitSize :: LocalTextId -&gt; Int
+$cbitSize :: LocalTextId -&gt; Int
+bitSizeMaybe :: LocalTextId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalTextId -&gt; Maybe Int
+testBit :: LocalTextId -&gt; Int -&gt; Bool
+$ctestBit :: LocalTextId -&gt; Int -&gt; Bool
+complementBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+$ccomplementBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+clearBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cclearBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+setBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+$csetBit :: LocalTextId -&gt; Int -&gt; LocalTextId
+bit :: Int -&gt; LocalTextId
+$cbit :: Int -&gt; LocalTextId
+zeroBits :: LocalTextId
+$czeroBits :: LocalTextId
+rotate :: LocalTextId -&gt; Int -&gt; LocalTextId
+$crotate :: LocalTextId -&gt; Int -&gt; LocalTextId
+shift :: LocalTextId -&gt; Int -&gt; LocalTextId
+$cshift :: LocalTextId -&gt; Int -&gt; LocalTextId
+complement :: LocalTextId -&gt; LocalTextId
+$ccomplement :: LocalTextId -&gt; LocalTextId
+xor :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$cxor :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+.|. :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$c.|. :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+.&amp;. :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+$c.&amp;. :: LocalTextId -&gt; LocalTextId -&gt; LocalTextId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-26"></span><span>
+</span><span id="line-27"></span><span class="hs-comment">-- | represents an index into a defnLookup</span><span>
+</span><span id="line-28"></span><span class="hs-comment">--</span><span>
+</span><span id="line-29"></span><span class="hs-comment">-- In this context, &quot;definition&quot; means an object that is either a term component or a (type) decl component, not a</span><span>
+</span><span id="line-30"></span><span class="hs-comment">-- patch, namespace, or any other kind of object.</span><span>
+</span><span id="line-31"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalDefnId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalDefnId"><span class="hs-identifier hs-var">LocalDefnId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalDefnId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalDefnId"><span class="hs-identifier hs-var">LocalDefnId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679576065"><span id="local-6989586621679576069"><span class="annot"><span class="annottext">LocalDefnId -&gt; LocalDefnId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c/= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+== :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c== :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576034"><span id="local-6989586621679576038"><span id="local-6989586621679576042"><span id="local-6989586621679576046"><span id="local-6989586621679576050"><span id="local-6989586621679576054"><span id="local-6989586621679576058"><span class="annot"><span class="annottext">Eq LocalDefnId
+LocalDefnId -&gt; LocalDefnId -&gt; Bool
+LocalDefnId -&gt; LocalDefnId -&gt; Ordering
+LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cmin :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+max :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cmax :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+&gt;= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c&gt;= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+&gt; :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c&gt; :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+&lt;= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c&lt;= :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+&lt; :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+$c&lt; :: LocalDefnId -&gt; LocalDefnId -&gt; Bool
+compare :: LocalDefnId -&gt; LocalDefnId -&gt; Ordering
+$ccompare :: LocalDefnId -&gt; LocalDefnId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679576021"><span id="local-6989586621679576025"><span id="local-6989586621679576029"><span class="annot"><span class="annottext">Int -&gt; LocalDefnId -&gt; ShowS
+[LocalDefnId] -&gt; ShowS
+LocalDefnId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalDefnId] -&gt; ShowS
+$cshowList :: [LocalDefnId] -&gt; ShowS
+show :: LocalDefnId -&gt; String
+$cshow :: LocalDefnId -&gt; String
+showsPrec :: Int -&gt; LocalDefnId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalDefnId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575992"><span id="local-6989586621679575996"><span id="local-6989586621679576000"><span id="local-6989586621679576004"><span id="local-6989586621679576008"><span id="local-6989586621679576012"><span id="local-6989586621679576016"><span class="annot"><span class="annottext">Integer -&gt; LocalDefnId
+LocalDefnId -&gt; LocalDefnId
+LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalDefnId
+$cfromInteger :: Integer -&gt; LocalDefnId
+signum :: LocalDefnId -&gt; LocalDefnId
+$csignum :: LocalDefnId -&gt; LocalDefnId
+abs :: LocalDefnId -&gt; LocalDefnId
+$cabs :: LocalDefnId -&gt; LocalDefnId
+negate :: LocalDefnId -&gt; LocalDefnId
+$cnegate :: LocalDefnId -&gt; LocalDefnId
+* :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$c* :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+- :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$c- :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
++ :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$c+ :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575983"><span class="annot"><span class="annottext">Num LocalDefnId
+Ord LocalDefnId
+LocalDefnId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalDefnId -&gt; Rational
+$ctoRational :: LocalDefnId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575950"><span id="local-6989586621679575954"><span id="local-6989586621679575958"><span id="local-6989586621679575962"><span id="local-6989586621679575966"><span id="local-6989586621679575970"><span id="local-6989586621679575974"><span id="local-6989586621679575978"><span class="annot"><span class="annottext">Int -&gt; LocalDefnId
+LocalDefnId -&gt; Int
+LocalDefnId -&gt; [LocalDefnId]
+LocalDefnId -&gt; LocalDefnId
+LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+$cenumFromThenTo :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+enumFromTo :: LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+$cenumFromTo :: LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+enumFromThen :: LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+$cenumFromThen :: LocalDefnId -&gt; LocalDefnId -&gt; [LocalDefnId]
+enumFrom :: LocalDefnId -&gt; [LocalDefnId]
+$cenumFrom :: LocalDefnId -&gt; [LocalDefnId]
+fromEnum :: LocalDefnId -&gt; Int
+$cfromEnum :: LocalDefnId -&gt; Int
+toEnum :: Int -&gt; LocalDefnId
+$ctoEnum :: Int -&gt; LocalDefnId
+pred :: LocalDefnId -&gt; LocalDefnId
+$cpred :: LocalDefnId -&gt; LocalDefnId
+succ :: LocalDefnId -&gt; LocalDefnId
+$csucc :: LocalDefnId -&gt; LocalDefnId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575917"><span id="local-6989586621679575921"><span id="local-6989586621679575925"><span id="local-6989586621679575929"><span id="local-6989586621679575933"><span id="local-6989586621679575937"><span id="local-6989586621679575941"><span class="annot"><span class="annottext">Enum LocalDefnId
+Real LocalDefnId
+LocalDefnId -&gt; Integer
+LocalDefnId -&gt; LocalDefnId -&gt; (LocalDefnId, LocalDefnId)
+LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalDefnId -&gt; Integer
+$ctoInteger :: LocalDefnId -&gt; Integer
+divMod :: LocalDefnId -&gt; LocalDefnId -&gt; (LocalDefnId, LocalDefnId)
+$cdivMod :: LocalDefnId -&gt; LocalDefnId -&gt; (LocalDefnId, LocalDefnId)
+quotRem :: LocalDefnId -&gt; LocalDefnId -&gt; (LocalDefnId, LocalDefnId)
+$cquotRem :: LocalDefnId -&gt; LocalDefnId -&gt; (LocalDefnId, LocalDefnId)
+mod :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cmod :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+div :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cdiv :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+rem :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$crem :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+quot :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cquot :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575826"><span id="local-6989586621679575830"><span id="local-6989586621679575834"><span id="local-6989586621679575838"><span id="local-6989586621679575842"><span id="local-6989586621679575846"><span id="local-6989586621679575850"><span id="local-6989586621679575854"><span id="local-6989586621679575858"><span id="local-6989586621679575862"><span id="local-6989586621679575866"><span id="local-6989586621679575870"><span id="local-6989586621679575874"><span id="local-6989586621679575878"><span id="local-6989586621679575882"><span id="local-6989586621679575886"><span id="local-6989586621679575890"><span id="local-6989586621679575894"><span id="local-6989586621679575898"><span id="local-6989586621679575902"><span id="local-6989586621679575906"><span id="local-6989586621679575910"><span class="annot"><span class="annottext">Eq LocalDefnId
+LocalDefnId
+Int -&gt; LocalDefnId
+LocalDefnId -&gt; Bool
+LocalDefnId -&gt; Int
+LocalDefnId -&gt; Maybe Int
+LocalDefnId -&gt; LocalDefnId
+LocalDefnId -&gt; Int -&gt; Bool
+LocalDefnId -&gt; Int -&gt; LocalDefnId
+LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalDefnId -&gt; Int
+$cpopCount :: LocalDefnId -&gt; Int
+rotateR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$crotateR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+rotateL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$crotateL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+unsafeShiftR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cunsafeShiftR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+shiftR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cshiftR :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+unsafeShiftL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cunsafeShiftL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+shiftL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cshiftL :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+isSigned :: LocalDefnId -&gt; Bool
+$cisSigned :: LocalDefnId -&gt; Bool
+bitSize :: LocalDefnId -&gt; Int
+$cbitSize :: LocalDefnId -&gt; Int
+bitSizeMaybe :: LocalDefnId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalDefnId -&gt; Maybe Int
+testBit :: LocalDefnId -&gt; Int -&gt; Bool
+$ctestBit :: LocalDefnId -&gt; Int -&gt; Bool
+complementBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$ccomplementBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+clearBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cclearBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+setBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$csetBit :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+bit :: Int -&gt; LocalDefnId
+$cbit :: Int -&gt; LocalDefnId
+zeroBits :: LocalDefnId
+$czeroBits :: LocalDefnId
+rotate :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$crotate :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+shift :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+$cshift :: LocalDefnId -&gt; Int -&gt; LocalDefnId
+complement :: LocalDefnId -&gt; LocalDefnId
+$ccomplement :: LocalDefnId -&gt; LocalDefnId
+xor :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$cxor :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+.|. :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$c.|. :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+.&amp;. :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+$c.&amp;. :: LocalDefnId -&gt; LocalDefnId -&gt; LocalDefnId
+</span><a href="#local-6989586621679575826"><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></a></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-32"></span><span>
+</span><span id="line-33"></span><span class="hs-comment">-- | a local index to a hash, used when the corresponding object is allowed to be absent</span><span>
+</span><span id="line-34"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalHashId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalHashId"><span class="hs-identifier hs-var">LocalHashId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalHashId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalHashId"><span class="hs-identifier hs-var">LocalHashId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679575816"><span id="local-6989586621679575820"><span class="annot"><span class="annottext">LocalHashId -&gt; LocalHashId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c/= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+== :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c== :: LocalHashId -&gt; LocalHashId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575785"><span id="local-6989586621679575789"><span id="local-6989586621679575793"><span id="local-6989586621679575797"><span id="local-6989586621679575801"><span id="local-6989586621679575805"><span id="local-6989586621679575809"><span class="annot"><span class="annottext">Eq LocalHashId
+LocalHashId -&gt; LocalHashId -&gt; Bool
+LocalHashId -&gt; LocalHashId -&gt; Ordering
+LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cmin :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+max :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cmax :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+&gt;= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c&gt;= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+&gt; :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c&gt; :: LocalHashId -&gt; LocalHashId -&gt; Bool
+&lt;= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c&lt;= :: LocalHashId -&gt; LocalHashId -&gt; Bool
+&lt; :: LocalHashId -&gt; LocalHashId -&gt; Bool
+$c&lt; :: LocalHashId -&gt; LocalHashId -&gt; Bool
+compare :: LocalHashId -&gt; LocalHashId -&gt; Ordering
+$ccompare :: LocalHashId -&gt; LocalHashId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575772"><span id="local-6989586621679575776"><span id="local-6989586621679575780"><span class="annot"><span class="annottext">Int -&gt; LocalHashId -&gt; ShowS
+[LocalHashId] -&gt; ShowS
+LocalHashId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalHashId] -&gt; ShowS
+$cshowList :: [LocalHashId] -&gt; ShowS
+show :: LocalHashId -&gt; String
+$cshow :: LocalHashId -&gt; String
+showsPrec :: Int -&gt; LocalHashId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalHashId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575743"><span id="local-6989586621679575747"><span id="local-6989586621679575751"><span id="local-6989586621679575755"><span id="local-6989586621679575759"><span id="local-6989586621679575763"><span id="local-6989586621679575767"><span class="annot"><span class="annottext">Integer -&gt; LocalHashId
+LocalHashId -&gt; LocalHashId
+LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalHashId
+$cfromInteger :: Integer -&gt; LocalHashId
+signum :: LocalHashId -&gt; LocalHashId
+$csignum :: LocalHashId -&gt; LocalHashId
+abs :: LocalHashId -&gt; LocalHashId
+$cabs :: LocalHashId -&gt; LocalHashId
+negate :: LocalHashId -&gt; LocalHashId
+$cnegate :: LocalHashId -&gt; LocalHashId
+* :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$c* :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+- :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$c- :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
++ :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$c+ :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575734"><span class="annot"><span class="annottext">Num LocalHashId
+Ord LocalHashId
+LocalHashId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalHashId -&gt; Rational
+$ctoRational :: LocalHashId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575701"><span id="local-6989586621679575705"><span id="local-6989586621679575709"><span id="local-6989586621679575713"><span id="local-6989586621679575717"><span id="local-6989586621679575721"><span id="local-6989586621679575725"><span id="local-6989586621679575729"><span class="annot"><span class="annottext">Int -&gt; LocalHashId
+LocalHashId -&gt; Int
+LocalHashId -&gt; [LocalHashId]
+LocalHashId -&gt; LocalHashId
+LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+LocalHashId -&gt; LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+$cenumFromThenTo :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+enumFromTo :: LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+$cenumFromTo :: LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+enumFromThen :: LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+$cenumFromThen :: LocalHashId -&gt; LocalHashId -&gt; [LocalHashId]
+enumFrom :: LocalHashId -&gt; [LocalHashId]
+$cenumFrom :: LocalHashId -&gt; [LocalHashId]
+fromEnum :: LocalHashId -&gt; Int
+$cfromEnum :: LocalHashId -&gt; Int
+toEnum :: Int -&gt; LocalHashId
+$ctoEnum :: Int -&gt; LocalHashId
+pred :: LocalHashId -&gt; LocalHashId
+$cpred :: LocalHashId -&gt; LocalHashId
+succ :: LocalHashId -&gt; LocalHashId
+$csucc :: LocalHashId -&gt; LocalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575668"><span id="local-6989586621679575672"><span id="local-6989586621679575676"><span id="local-6989586621679575680"><span id="local-6989586621679575684"><span id="local-6989586621679575688"><span id="local-6989586621679575692"><span class="annot"><span class="annottext">Enum LocalHashId
+Real LocalHashId
+LocalHashId -&gt; Integer
+LocalHashId -&gt; LocalHashId -&gt; (LocalHashId, LocalHashId)
+LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalHashId -&gt; Integer
+$ctoInteger :: LocalHashId -&gt; Integer
+divMod :: LocalHashId -&gt; LocalHashId -&gt; (LocalHashId, LocalHashId)
+$cdivMod :: LocalHashId -&gt; LocalHashId -&gt; (LocalHashId, LocalHashId)
+quotRem :: LocalHashId -&gt; LocalHashId -&gt; (LocalHashId, LocalHashId)
+$cquotRem :: LocalHashId -&gt; LocalHashId -&gt; (LocalHashId, LocalHashId)
+mod :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cmod :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+div :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cdiv :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+rem :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$crem :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+quot :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cquot :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575577"><span id="local-6989586621679575581"><span id="local-6989586621679575585"><span id="local-6989586621679575589"><span id="local-6989586621679575593"><span id="local-6989586621679575597"><span id="local-6989586621679575601"><span id="local-6989586621679575605"><span id="local-6989586621679575609"><span id="local-6989586621679575613"><span id="local-6989586621679575617"><span id="local-6989586621679575621"><span id="local-6989586621679575625"><span id="local-6989586621679575629"><span id="local-6989586621679575633"><span id="local-6989586621679575637"><span id="local-6989586621679575641"><span id="local-6989586621679575645"><span id="local-6989586621679575649"><span id="local-6989586621679575653"><span id="local-6989586621679575657"><span id="local-6989586621679575661"><span class="annot"><span class="annottext">Eq LocalHashId
+LocalHashId
+Int -&gt; LocalHashId
+LocalHashId -&gt; Bool
+LocalHashId -&gt; Int
+LocalHashId -&gt; Maybe Int
+LocalHashId -&gt; LocalHashId
+LocalHashId -&gt; Int -&gt; Bool
+LocalHashId -&gt; Int -&gt; LocalHashId
+LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalHashId -&gt; Int
+$cpopCount :: LocalHashId -&gt; Int
+rotateR :: LocalHashId -&gt; Int -&gt; LocalHashId
+$crotateR :: LocalHashId -&gt; Int -&gt; LocalHashId
+rotateL :: LocalHashId -&gt; Int -&gt; LocalHashId
+$crotateL :: LocalHashId -&gt; Int -&gt; LocalHashId
+unsafeShiftR :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cunsafeShiftR :: LocalHashId -&gt; Int -&gt; LocalHashId
+shiftR :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cshiftR :: LocalHashId -&gt; Int -&gt; LocalHashId
+unsafeShiftL :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cunsafeShiftL :: LocalHashId -&gt; Int -&gt; LocalHashId
+shiftL :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cshiftL :: LocalHashId -&gt; Int -&gt; LocalHashId
+isSigned :: LocalHashId -&gt; Bool
+$cisSigned :: LocalHashId -&gt; Bool
+bitSize :: LocalHashId -&gt; Int
+$cbitSize :: LocalHashId -&gt; Int
+bitSizeMaybe :: LocalHashId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalHashId -&gt; Maybe Int
+testBit :: LocalHashId -&gt; Int -&gt; Bool
+$ctestBit :: LocalHashId -&gt; Int -&gt; Bool
+complementBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+$ccomplementBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+clearBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cclearBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+setBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+$csetBit :: LocalHashId -&gt; Int -&gt; LocalHashId
+bit :: Int -&gt; LocalHashId
+$cbit :: Int -&gt; LocalHashId
+zeroBits :: LocalHashId
+$czeroBits :: LocalHashId
+rotate :: LocalHashId -&gt; Int -&gt; LocalHashId
+$crotate :: LocalHashId -&gt; Int -&gt; LocalHashId
+shift :: LocalHashId -&gt; Int -&gt; LocalHashId
+$cshift :: LocalHashId -&gt; Int -&gt; LocalHashId
+complement :: LocalHashId -&gt; LocalHashId
+$ccomplement :: LocalHashId -&gt; LocalHashId
+xor :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$cxor :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+.|. :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$c.|. :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+.&amp;. :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+$c.&amp;. :: LocalHashId -&gt; LocalHashId -&gt; LocalHashId
+</span><a href="#local-6989586621679575577"><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></a></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-35"></span><span>
+</span><span id="line-36"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalPatchObjectId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalPatchObjectId"><span class="hs-identifier hs-var">LocalPatchObjectId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalPatchObjectId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalPatchObjectId"><span class="hs-identifier hs-var">LocalPatchObjectId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679575567"><span id="local-6989586621679575571"><span class="annot"><span class="annottext">LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c/= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+== :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c== :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575536"><span id="local-6989586621679575540"><span id="local-6989586621679575544"><span id="local-6989586621679575548"><span id="local-6989586621679575552"><span id="local-6989586621679575556"><span id="local-6989586621679575560"><span class="annot"><span class="annottext">Eq LocalPatchObjectId
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Ordering
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cmin :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+max :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cmax :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+&gt;= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c&gt;= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+&gt; :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c&gt; :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+&lt;= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c&lt;= :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+&lt; :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+$c&lt; :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Bool
+compare :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Ordering
+$ccompare :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575523"><span id="local-6989586621679575527"><span id="local-6989586621679575531"><span class="annot"><span class="annottext">Int -&gt; LocalPatchObjectId -&gt; ShowS
+[LocalPatchObjectId] -&gt; ShowS
+LocalPatchObjectId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalPatchObjectId] -&gt; ShowS
+$cshowList :: [LocalPatchObjectId] -&gt; ShowS
+show :: LocalPatchObjectId -&gt; String
+$cshow :: LocalPatchObjectId -&gt; String
+showsPrec :: Int -&gt; LocalPatchObjectId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalPatchObjectId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575494"><span id="local-6989586621679575498"><span id="local-6989586621679575502"><span id="local-6989586621679575506"><span id="local-6989586621679575510"><span id="local-6989586621679575514"><span id="local-6989586621679575518"><span class="annot"><span class="annottext">Integer -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalPatchObjectId
+$cfromInteger :: Integer -&gt; LocalPatchObjectId
+signum :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$csignum :: LocalPatchObjectId -&gt; LocalPatchObjectId
+abs :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$cabs :: LocalPatchObjectId -&gt; LocalPatchObjectId
+negate :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$cnegate :: LocalPatchObjectId -&gt; LocalPatchObjectId
+* :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$c* :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+- :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$c- :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
++ :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$c+ :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575485"><span class="annot"><span class="annottext">Num LocalPatchObjectId
+Ord LocalPatchObjectId
+LocalPatchObjectId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalPatchObjectId -&gt; Rational
+$ctoRational :: LocalPatchObjectId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575452"><span id="local-6989586621679575456"><span id="local-6989586621679575460"><span id="local-6989586621679575464"><span id="local-6989586621679575468"><span id="local-6989586621679575472"><span id="local-6989586621679575476"><span id="local-6989586621679575480"><span class="annot"><span class="annottext">Int -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; Int
+LocalPatchObjectId -&gt; [LocalPatchObjectId]
+LocalPatchObjectId -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+$cenumFromThenTo :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+enumFromTo :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+$cenumFromTo :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+enumFromThen :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+$cenumFromThen :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; [LocalPatchObjectId]
+enumFrom :: LocalPatchObjectId -&gt; [LocalPatchObjectId]
+$cenumFrom :: LocalPatchObjectId -&gt; [LocalPatchObjectId]
+fromEnum :: LocalPatchObjectId -&gt; Int
+$cfromEnum :: LocalPatchObjectId -&gt; Int
+toEnum :: Int -&gt; LocalPatchObjectId
+$ctoEnum :: Int -&gt; LocalPatchObjectId
+pred :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$cpred :: LocalPatchObjectId -&gt; LocalPatchObjectId
+succ :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$csucc :: LocalPatchObjectId -&gt; LocalPatchObjectId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575419"><span id="local-6989586621679575423"><span id="local-6989586621679575427"><span id="local-6989586621679575431"><span id="local-6989586621679575435"><span id="local-6989586621679575439"><span id="local-6989586621679575443"><span class="annot"><span class="annottext">Enum LocalPatchObjectId
+Real LocalPatchObjectId
+LocalPatchObjectId -&gt; Integer
+LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; (LocalPatchObjectId, LocalPatchObjectId)
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalPatchObjectId -&gt; Integer
+$ctoInteger :: LocalPatchObjectId -&gt; Integer
+divMod :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; (LocalPatchObjectId, LocalPatchObjectId)
+$cdivMod :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; (LocalPatchObjectId, LocalPatchObjectId)
+quotRem :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; (LocalPatchObjectId, LocalPatchObjectId)
+$cquotRem :: LocalPatchObjectId
+-&gt; LocalPatchObjectId -&gt; (LocalPatchObjectId, LocalPatchObjectId)
+mod :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cmod :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+div :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cdiv :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+rem :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$crem :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+quot :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cquot :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575328"><span id="local-6989586621679575332"><span id="local-6989586621679575336"><span id="local-6989586621679575340"><span id="local-6989586621679575344"><span id="local-6989586621679575348"><span id="local-6989586621679575352"><span id="local-6989586621679575356"><span id="local-6989586621679575360"><span id="local-6989586621679575364"><span id="local-6989586621679575368"><span id="local-6989586621679575372"><span id="local-6989586621679575376"><span id="local-6989586621679575380"><span id="local-6989586621679575384"><span id="local-6989586621679575388"><span id="local-6989586621679575392"><span id="local-6989586621679575396"><span id="local-6989586621679575400"><span id="local-6989586621679575404"><span id="local-6989586621679575408"><span id="local-6989586621679575412"><span class="annot"><span class="annottext">Eq LocalPatchObjectId
+LocalPatchObjectId
+Int -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; Bool
+LocalPatchObjectId -&gt; Int
+LocalPatchObjectId -&gt; Maybe Int
+LocalPatchObjectId -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; Int -&gt; Bool
+LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalPatchObjectId -&gt; Int
+$cpopCount :: LocalPatchObjectId -&gt; Int
+rotateR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$crotateR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+rotateL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$crotateL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+unsafeShiftR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cunsafeShiftR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+shiftR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cshiftR :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+unsafeShiftL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cunsafeShiftL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+shiftL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cshiftL :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+isSigned :: LocalPatchObjectId -&gt; Bool
+$cisSigned :: LocalPatchObjectId -&gt; Bool
+bitSize :: LocalPatchObjectId -&gt; Int
+$cbitSize :: LocalPatchObjectId -&gt; Int
+bitSizeMaybe :: LocalPatchObjectId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalPatchObjectId -&gt; Maybe Int
+testBit :: LocalPatchObjectId -&gt; Int -&gt; Bool
+$ctestBit :: LocalPatchObjectId -&gt; Int -&gt; Bool
+complementBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$ccomplementBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+clearBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cclearBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+setBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$csetBit :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+bit :: Int -&gt; LocalPatchObjectId
+$cbit :: Int -&gt; LocalPatchObjectId
+zeroBits :: LocalPatchObjectId
+$czeroBits :: LocalPatchObjectId
+rotate :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$crotate :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+shift :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+$cshift :: LocalPatchObjectId -&gt; Int -&gt; LocalPatchObjectId
+complement :: LocalPatchObjectId -&gt; LocalPatchObjectId
+$ccomplement :: LocalPatchObjectId -&gt; LocalPatchObjectId
+xor :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$cxor :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+.|. :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$c.|. :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+.&amp;. :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+$c.&amp;. :: LocalPatchObjectId -&gt; LocalPatchObjectId -&gt; LocalPatchObjectId
+</span><a href="#local-6989586621679575328"><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></a></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-37"></span><span>
+</span><span id="line-38"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalBranchChildId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalBranchChildId"><span class="hs-identifier hs-var">LocalBranchChildId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalBranchChildId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalBranchChildId"><span class="hs-identifier hs-var">LocalBranchChildId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679575318"><span id="local-6989586621679575322"><span class="annot"><span class="annottext">LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c/= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+== :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c== :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575287"><span id="local-6989586621679575291"><span id="local-6989586621679575295"><span id="local-6989586621679575299"><span id="local-6989586621679575303"><span id="local-6989586621679575307"><span id="local-6989586621679575311"><span class="annot"><span class="annottext">Eq LocalBranchChildId
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; Ordering
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cmin :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+max :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cmax :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+&gt;= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c&gt;= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+&gt; :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c&gt; :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+&lt;= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c&lt;= :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+&lt; :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+$c&lt; :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Bool
+compare :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Ordering
+$ccompare :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575274"><span id="local-6989586621679575278"><span id="local-6989586621679575282"><span class="annot"><span class="annottext">Int -&gt; LocalBranchChildId -&gt; ShowS
+[LocalBranchChildId] -&gt; ShowS
+LocalBranchChildId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalBranchChildId] -&gt; ShowS
+$cshowList :: [LocalBranchChildId] -&gt; ShowS
+show :: LocalBranchChildId -&gt; String
+$cshow :: LocalBranchChildId -&gt; String
+showsPrec :: Int -&gt; LocalBranchChildId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalBranchChildId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575245"><span id="local-6989586621679575249"><span id="local-6989586621679575253"><span id="local-6989586621679575257"><span id="local-6989586621679575261"><span id="local-6989586621679575265"><span id="local-6989586621679575269"><span class="annot"><span class="annottext">Integer -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalBranchChildId
+$cfromInteger :: Integer -&gt; LocalBranchChildId
+signum :: LocalBranchChildId -&gt; LocalBranchChildId
+$csignum :: LocalBranchChildId -&gt; LocalBranchChildId
+abs :: LocalBranchChildId -&gt; LocalBranchChildId
+$cabs :: LocalBranchChildId -&gt; LocalBranchChildId
+negate :: LocalBranchChildId -&gt; LocalBranchChildId
+$cnegate :: LocalBranchChildId -&gt; LocalBranchChildId
+* :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$c* :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+- :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$c- :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
++ :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$c+ :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575236"><span class="annot"><span class="annottext">Num LocalBranchChildId
+Ord LocalBranchChildId
+LocalBranchChildId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalBranchChildId -&gt; Rational
+$ctoRational :: LocalBranchChildId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575203"><span id="local-6989586621679575207"><span id="local-6989586621679575211"><span id="local-6989586621679575215"><span id="local-6989586621679575219"><span id="local-6989586621679575223"><span id="local-6989586621679575227"><span id="local-6989586621679575231"><span class="annot"><span class="annottext">Int -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; Int
+LocalBranchChildId -&gt; [LocalBranchChildId]
+LocalBranchChildId -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+$cenumFromThenTo :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+enumFromTo :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+$cenumFromTo :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+enumFromThen :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+$cenumFromThen :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; [LocalBranchChildId]
+enumFrom :: LocalBranchChildId -&gt; [LocalBranchChildId]
+$cenumFrom :: LocalBranchChildId -&gt; [LocalBranchChildId]
+fromEnum :: LocalBranchChildId -&gt; Int
+$cfromEnum :: LocalBranchChildId -&gt; Int
+toEnum :: Int -&gt; LocalBranchChildId
+$ctoEnum :: Int -&gt; LocalBranchChildId
+pred :: LocalBranchChildId -&gt; LocalBranchChildId
+$cpred :: LocalBranchChildId -&gt; LocalBranchChildId
+succ :: LocalBranchChildId -&gt; LocalBranchChildId
+$csucc :: LocalBranchChildId -&gt; LocalBranchChildId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575170"><span id="local-6989586621679575174"><span id="local-6989586621679575178"><span id="local-6989586621679575182"><span id="local-6989586621679575186"><span id="local-6989586621679575190"><span id="local-6989586621679575194"><span class="annot"><span class="annottext">Enum LocalBranchChildId
+Real LocalBranchChildId
+LocalBranchChildId -&gt; Integer
+LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; (LocalBranchChildId, LocalBranchChildId)
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalBranchChildId -&gt; Integer
+$ctoInteger :: LocalBranchChildId -&gt; Integer
+divMod :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; (LocalBranchChildId, LocalBranchChildId)
+$cdivMod :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; (LocalBranchChildId, LocalBranchChildId)
+quotRem :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; (LocalBranchChildId, LocalBranchChildId)
+$cquotRem :: LocalBranchChildId
+-&gt; LocalBranchChildId -&gt; (LocalBranchChildId, LocalBranchChildId)
+mod :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cmod :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+div :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cdiv :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+rem :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$crem :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+quot :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cquot :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575079"><span id="local-6989586621679575083"><span id="local-6989586621679575087"><span id="local-6989586621679575091"><span id="local-6989586621679575095"><span id="local-6989586621679575099"><span id="local-6989586621679575103"><span id="local-6989586621679575107"><span id="local-6989586621679575111"><span id="local-6989586621679575115"><span id="local-6989586621679575119"><span id="local-6989586621679575123"><span id="local-6989586621679575127"><span id="local-6989586621679575131"><span id="local-6989586621679575135"><span id="local-6989586621679575139"><span id="local-6989586621679575143"><span id="local-6989586621679575147"><span id="local-6989586621679575151"><span id="local-6989586621679575155"><span id="local-6989586621679575159"><span id="local-6989586621679575163"><span class="annot"><span class="annottext">Eq LocalBranchChildId
+LocalBranchChildId
+Int -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; Bool
+LocalBranchChildId -&gt; Int
+LocalBranchChildId -&gt; Maybe Int
+LocalBranchChildId -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; Int -&gt; Bool
+LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalBranchChildId -&gt; Int
+$cpopCount :: LocalBranchChildId -&gt; Int
+rotateR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$crotateR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+rotateL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$crotateL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+unsafeShiftR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cunsafeShiftR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+shiftR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cshiftR :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+unsafeShiftL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cunsafeShiftL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+shiftL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cshiftL :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+isSigned :: LocalBranchChildId -&gt; Bool
+$cisSigned :: LocalBranchChildId -&gt; Bool
+bitSize :: LocalBranchChildId -&gt; Int
+$cbitSize :: LocalBranchChildId -&gt; Int
+bitSizeMaybe :: LocalBranchChildId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalBranchChildId -&gt; Maybe Int
+testBit :: LocalBranchChildId -&gt; Int -&gt; Bool
+$ctestBit :: LocalBranchChildId -&gt; Int -&gt; Bool
+complementBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$ccomplementBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+clearBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cclearBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+setBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$csetBit :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+bit :: Int -&gt; LocalBranchChildId
+$cbit :: Int -&gt; LocalBranchChildId
+zeroBits :: LocalBranchChildId
+$czeroBits :: LocalBranchChildId
+rotate :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$crotate :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+shift :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+$cshift :: LocalBranchChildId -&gt; Int -&gt; LocalBranchChildId
+complement :: LocalBranchChildId -&gt; LocalBranchChildId
+$ccomplement :: LocalBranchChildId -&gt; LocalBranchChildId
+xor :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$cxor :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+.|. :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$c.|. :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+.&amp;. :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+$c.&amp;. :: LocalBranchChildId -&gt; LocalBranchChildId -&gt; LocalBranchChildId
+</span><a href="#local-6989586621679575079"><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></a></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-39"></span><span>
+</span><span id="line-40"></span><span class="hs-comment">-- | causal hashes are treated differently from HashIds, which don't have dependencies</span><span>
+</span><span id="line-41"></span><span class="hs-keyword">newtype</span><span> </span><span id="LocalCausalHashId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalCausalHashId"><span class="hs-identifier hs-var">LocalCausalHashId</span></a></span></span><span> </span><span class="hs-glyph">=</span><span> </span><span id="LocalCausalHashId"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalCausalHashId"><span class="hs-identifier hs-var">LocalCausalHashId</span></a></span></span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span> </span><span class="hs-keyword">deriving</span><span> </span><span class="hs-special">(</span><span id="local-6989586621679575069"><span id="local-6989586621679575073"><span class="annot"><span class="annottext">LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+forall a. (a -&gt; a -&gt; Bool) -&gt; (a -&gt; a -&gt; Bool) -&gt; Eq a
+/= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c/= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+== :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c== :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Eq</span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575038"><span id="local-6989586621679575042"><span id="local-6989586621679575046"><span id="local-6989586621679575050"><span id="local-6989586621679575054"><span id="local-6989586621679575058"><span id="local-6989586621679575062"><span class="annot"><span class="annottext">Eq LocalCausalHashId
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; Ordering
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; Ordering)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; Bool)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; Ord a
+min :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cmin :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+max :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cmax :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+&gt;= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c&gt;= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+&gt; :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c&gt; :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+&lt;= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c&lt;= :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+&lt; :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+$c&lt; :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Bool
+compare :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Ordering
+$ccompare :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; Ordering
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Ord</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679575025"><span id="local-6989586621679575029"><span id="local-6989586621679575033"><span class="annot"><span class="annottext">Int -&gt; LocalCausalHashId -&gt; ShowS
+[LocalCausalHashId] -&gt; ShowS
+LocalCausalHashId -&gt; String
+forall a.
+(Int -&gt; a -&gt; ShowS) -&gt; (a -&gt; String) -&gt; ([a] -&gt; ShowS) -&gt; Show a
+showList :: [LocalCausalHashId] -&gt; ShowS
+$cshowList :: [LocalCausalHashId] -&gt; ShowS
+show :: LocalCausalHashId -&gt; String
+$cshow :: LocalCausalHashId -&gt; String
+showsPrec :: Int -&gt; LocalCausalHashId -&gt; ShowS
+$cshowsPrec :: Int -&gt; LocalCausalHashId -&gt; ShowS
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Show</span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679574996"><span id="local-6989586621679575000"><span id="local-6989586621679575004"><span id="local-6989586621679575008"><span id="local-6989586621679575012"><span id="local-6989586621679575016"><span id="local-6989586621679575020"><span class="annot"><span class="annottext">Integer -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+forall a.
+(a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Integer -&gt; a)
+-&gt; Num a
+fromInteger :: Integer -&gt; LocalCausalHashId
+$cfromInteger :: Integer -&gt; LocalCausalHashId
+signum :: LocalCausalHashId -&gt; LocalCausalHashId
+$csignum :: LocalCausalHashId -&gt; LocalCausalHashId
+abs :: LocalCausalHashId -&gt; LocalCausalHashId
+$cabs :: LocalCausalHashId -&gt; LocalCausalHashId
+negate :: LocalCausalHashId -&gt; LocalCausalHashId
+$cnegate :: LocalCausalHashId -&gt; LocalCausalHashId
+* :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$c* :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+- :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$c- :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
++ :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$c+ :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Num</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679574987"><span class="annot"><span class="annottext">Num LocalCausalHashId
+Ord LocalCausalHashId
+LocalCausalHashId -&gt; Rational
+forall a. Num a -&gt; Ord a -&gt; (a -&gt; Rational) -&gt; Real a
+toRational :: LocalCausalHashId -&gt; Rational
+$ctoRational :: LocalCausalHashId -&gt; Rational
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var">Real</span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679574954"><span id="local-6989586621679574958"><span id="local-6989586621679574962"><span id="local-6989586621679574966"><span id="local-6989586621679574970"><span id="local-6989586621679574974"><span id="local-6989586621679574978"><span id="local-6989586621679574982"><span class="annot"><span class="annottext">Int -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; Int
+LocalCausalHashId -&gt; [LocalCausalHashId]
+LocalCausalHashId -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+forall a.
+(a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; [a])
+-&gt; (a -&gt; a -&gt; a -&gt; [a])
+-&gt; Enum a
+enumFromThenTo :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+$cenumFromThenTo :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+enumFromTo :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+$cenumFromTo :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+enumFromThen :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+$cenumFromThen :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; [LocalCausalHashId]
+enumFrom :: LocalCausalHashId -&gt; [LocalCausalHashId]
+$cenumFrom :: LocalCausalHashId -&gt; [LocalCausalHashId]
+fromEnum :: LocalCausalHashId -&gt; Int
+$cfromEnum :: LocalCausalHashId -&gt; Int
+toEnum :: Int -&gt; LocalCausalHashId
+$ctoEnum :: Int -&gt; LocalCausalHashId
+pred :: LocalCausalHashId -&gt; LocalCausalHashId
+$cpred :: LocalCausalHashId -&gt; LocalCausalHashId
+succ :: LocalCausalHashId -&gt; LocalCausalHashId
+$csucc :: LocalCausalHashId -&gt; LocalCausalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Enum</span></span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679574921"><span id="local-6989586621679574925"><span id="local-6989586621679574929"><span id="local-6989586621679574933"><span id="local-6989586621679574937"><span id="local-6989586621679574941"><span id="local-6989586621679574945"><span class="annot"><span class="annottext">Enum LocalCausalHashId
+Real LocalCausalHashId
+LocalCausalHashId -&gt; Integer
+LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; (LocalCausalHashId, LocalCausalHashId)
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+forall a.
+Real a
+-&gt; Enum a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; a -&gt; (a, a))
+-&gt; (a -&gt; Integer)
+-&gt; Integral a
+toInteger :: LocalCausalHashId -&gt; Integer
+$ctoInteger :: LocalCausalHashId -&gt; Integer
+divMod :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; (LocalCausalHashId, LocalCausalHashId)
+$cdivMod :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; (LocalCausalHashId, LocalCausalHashId)
+quotRem :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; (LocalCausalHashId, LocalCausalHashId)
+$cquotRem :: LocalCausalHashId
+-&gt; LocalCausalHashId -&gt; (LocalCausalHashId, LocalCausalHashId)
+mod :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cmod :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+div :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cdiv :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+rem :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$crem :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+quot :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cquot :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Integral</span></span></span></span></span></span></span></span></span><span class="hs-special">,</span><span> </span><span id="local-6989586621679574830"><span id="local-6989586621679574834"><span id="local-6989586621679574838"><span id="local-6989586621679574842"><span id="local-6989586621679574846"><span id="local-6989586621679574850"><span id="local-6989586621679574854"><span id="local-6989586621679574858"><span id="local-6989586621679574862"><span id="local-6989586621679574866"><span id="local-6989586621679574870"><span id="local-6989586621679574874"><span id="local-6989586621679574878"><span id="local-6989586621679574882"><span id="local-6989586621679574886"><span id="local-6989586621679574890"><span id="local-6989586621679574894"><span id="local-6989586621679574898"><span id="local-6989586621679574902"><span id="local-6989586621679574906"><span id="local-6989586621679574910"><span id="local-6989586621679574914"><span class="annot"><span class="annottext">Eq LocalCausalHashId
+LocalCausalHashId
+Int -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; Bool
+LocalCausalHashId -&gt; Int
+LocalCausalHashId -&gt; Maybe Int
+LocalCausalHashId -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; Int -&gt; Bool
+LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+forall a.
+Eq a
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a -&gt; a)
+-&gt; (a -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; a
+-&gt; (Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; Bool)
+-&gt; (a -&gt; Maybe Int)
+-&gt; (a -&gt; Int)
+-&gt; (a -&gt; Bool)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int -&gt; a)
+-&gt; (a -&gt; Int)
+-&gt; Bits a
+popCount :: LocalCausalHashId -&gt; Int
+$cpopCount :: LocalCausalHashId -&gt; Int
+rotateR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$crotateR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+rotateL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$crotateL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+unsafeShiftR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cunsafeShiftR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+shiftR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cshiftR :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+unsafeShiftL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cunsafeShiftL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+shiftL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cshiftL :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+isSigned :: LocalCausalHashId -&gt; Bool
+$cisSigned :: LocalCausalHashId -&gt; Bool
+bitSize :: LocalCausalHashId -&gt; Int
+$cbitSize :: LocalCausalHashId -&gt; Int
+bitSizeMaybe :: LocalCausalHashId -&gt; Maybe Int
+$cbitSizeMaybe :: LocalCausalHashId -&gt; Maybe Int
+testBit :: LocalCausalHashId -&gt; Int -&gt; Bool
+$ctestBit :: LocalCausalHashId -&gt; Int -&gt; Bool
+complementBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$ccomplementBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+clearBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cclearBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+setBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$csetBit :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+bit :: Int -&gt; LocalCausalHashId
+$cbit :: Int -&gt; LocalCausalHashId
+zeroBits :: LocalCausalHashId
+$czeroBits :: LocalCausalHashId
+rotate :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$crotate :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+shift :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+$cshift :: LocalCausalHashId -&gt; Int -&gt; LocalCausalHashId
+complement :: LocalCausalHashId -&gt; LocalCausalHashId
+$ccomplement :: LocalCausalHashId -&gt; LocalCausalHashId
+xor :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$cxor :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+.|. :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$c.|. :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+.&amp;. :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+$c.&amp;. :: LocalCausalHashId -&gt; LocalCausalHashId -&gt; LocalCausalHashId
+</span><a href="#local-6989586621679574830"><span class="hs-identifier hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var hs-var">Bits</span></a></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span><span class="hs-special">)</span><span> </span><span class="hs-keyword">via</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Word64</span></span><span>
+</span><span id="line-42"></span><span>
+</span><span id="line-43"></span><span class="hs-keyword">instance</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Bitraversable</span></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="hs-keyword">where</span><span>
+</span><span id="line-44"></span><span>  </span><span id="local-6989586621679574809"><span class="annot"><span class="annottext">bitraverse :: forall (f :: * -&gt; *) a c b d.
+Applicative f =&gt;
+(a -&gt; f c) -&gt; (b -&gt; f d) -&gt; LocalIds' a b -&gt; f (LocalIds' c d)
+</span><a href="#local-6989586621679574809"><span class="hs-identifier hs-var hs-var hs-var hs-var">bitraverse</span></a></span></span><span> </span><span id="local-6989586621679574808"><span class="annot"><span class="annottext">a -&gt; f c
+</span><a href="#local-6989586621679574808"><span class="hs-identifier hs-var">f</span></a></span></span><span> </span><span id="local-6989586621679574807"><span class="annot"><span class="annottext">b -&gt; f d
+</span><a href="#local-6989586621679574807"><span class="hs-identifier hs-var">g</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-type">LocalIds</span></a></span><span> </span><span id="local-6989586621679574806"><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574806"><span class="hs-identifier hs-var">t</span></a></span></span><span> </span><span id="local-6989586621679574805"><span class="annot"><span class="annottext">Vector b
+</span><a href="#local-6989586621679574805"><span class="hs-identifier hs-var">d</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall t h. Vector t -&gt; Vector h -&gt; LocalIds' t h
+</span><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;$&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Traversable t, Applicative f) =&gt;
+(a -&gt; f b) -&gt; t a -&gt; f (t b)
+</span><span class="hs-identifier hs-var">traverse</span></span><span> </span><span class="annot"><span class="annottext">a -&gt; f c
+</span><a href="#local-6989586621679574808"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574806"><span class="hs-identifier hs-var">t</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Applicative f =&gt; f (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;*&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Traversable t, Applicative f) =&gt;
+(a -&gt; f b) -&gt; t a -&gt; f (t b)
+</span><span class="hs-identifier hs-var">traverse</span></span><span> </span><span class="annot"><span class="annottext">b -&gt; f d
+</span><a href="#local-6989586621679574807"><span class="hs-identifier hs-var">g</span></a></span><span> </span><span class="annot"><span class="annottext">Vector b
+</span><a href="#local-6989586621679574805"><span class="hs-identifier hs-var">d</span></a></span><span>
+</span><span id="line-45"></span><span>
+</span><span id="line-46"></span><span class="hs-keyword">instance</span><span> </span><span id="local-6989586621679574796"><span id="local-6989586621679574798"><span id="local-6989586621679574801"><span class="annot"><span class="hs-identifier hs-type">Bifoldable</span></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span></span></span></span><span> </span><span class="hs-keyword">where</span><span>
+</span><span id="line-47"></span><span>  </span><span id="local-6989586621679574785"><span class="annot"><span class="annottext">bifoldMap :: forall m a b.
+Monoid m =&gt;
+(a -&gt; m) -&gt; (b -&gt; m) -&gt; LocalIds' a b -&gt; m
+</span><a href="#local-6989586621679574785"><span class="hs-identifier hs-var hs-var hs-var hs-var">bifoldMap</span></a></span></span><span> </span><span id="local-6989586621679574784"><span class="annot"><span class="annottext">a -&gt; m
+</span><a href="#local-6989586621679574784"><span class="hs-identifier hs-var">f</span></a></span></span><span> </span><span id="local-6989586621679574783"><span class="annot"><span class="annottext">b -&gt; m
+</span><a href="#local-6989586621679574783"><span class="hs-identifier hs-var">g</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-type">LocalIds</span></a></span><span> </span><span id="local-6989586621679574782"><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574782"><span class="hs-identifier hs-var">t</span></a></span></span><span> </span><span id="local-6989586621679574781"><span class="annot"><span class="annottext">Vector b
+</span><a href="#local-6989586621679574781"><span class="hs-identifier hs-var">d</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) m a.
+(Foldable t, Monoid m) =&gt;
+(a -&gt; m) -&gt; t a -&gt; m
+</span><span class="hs-identifier hs-var">foldMap</span></span><span> </span><span class="annot"><span class="annottext">a -&gt; m
+</span><a href="#local-6989586621679574784"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574782"><span class="hs-identifier hs-var">t</span></a></span><span> </span><span class="annot"><span class="annottext">forall a. Semigroup a =&gt; a -&gt; a -&gt; a
+</span><span class="hs-operator hs-var">&lt;&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) m a.
+(Foldable t, Monoid m) =&gt;
+(a -&gt; m) -&gt; t a -&gt; m
+</span><span class="hs-identifier hs-var">foldMap</span></span><span> </span><span class="annot"><span class="annottext">b -&gt; m
+</span><a href="#local-6989586621679574783"><span class="hs-identifier hs-var">g</span></a></span><span> </span><span class="annot"><span class="annottext">Vector b
+</span><a href="#local-6989586621679574781"><span class="hs-identifier hs-var">d</span></a></span><span>
+</span><span id="line-48"></span><span>
+</span><span id="line-49"></span><span class="hs-keyword">instance</span><span> </span><span id="local-6989586621679574775"><span id="local-6989586621679574777"><span class="annot"><span class="hs-identifier hs-type">Bifunctor</span></span><span> </span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span></span></span><span> </span><span class="hs-keyword">where</span><span>
+</span><span id="line-50"></span><span>  </span><span id="local-6989586621679574770"><span class="annot"><span class="annottext">bimap :: forall a b c d.
+(a -&gt; b) -&gt; (c -&gt; d) -&gt; LocalIds' a c -&gt; LocalIds' b d
+</span><span class="hs-identifier hs-var hs-var hs-var hs-var">bimap</span></span></span><span> </span><span id="local-6989586621679574768"><span class="annot"><span class="annottext">a -&gt; b
+</span><a href="#local-6989586621679574768"><span class="hs-identifier hs-var">f</span></a></span></span><span> </span><span id="local-6989586621679574767"><span class="annot"><span class="annottext">c -&gt; d
+</span><a href="#local-6989586621679574767"><span class="hs-identifier hs-var">g</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-type">LocalIds</span></a></span><span> </span><span id="local-6989586621679574766"><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574766"><span class="hs-identifier hs-var">t</span></a></span></span><span> </span><span id="local-6989586621679574765"><span class="annot"><span class="annottext">Vector c
+</span><a href="#local-6989586621679574765"><span class="hs-identifier hs-var">d</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall t h. Vector t -&gt; Vector h -&gt; LocalIds' t h
+</span><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">a -&gt; b
+</span><a href="#local-6989586621679574768"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;$&gt;</span></span><span> </span><span class="annot"><span class="annottext">Vector a
+</span><a href="#local-6989586621679574766"><span class="hs-identifier hs-var">t</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-special">(</span><span class="annot"><span class="annottext">c -&gt; d
+</span><a href="#local-6989586621679574767"><span class="hs-identifier hs-var">g</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;$&gt;</span></span><span> </span><span class="annot"><span class="annottext">Vector c
+</span><a href="#local-6989586621679574765"><span class="hs-identifier hs-var">d</span></a></span><span class="hs-special">)</span><span>
+</span><span id="line-51"></span><span>
+</span><span id="line-52"></span><span id="local-6989586621679576385"><span id="local-6989586621679576386"><span id="local-6989586621679576387"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#t_"><span class="hs-identifier hs-type">t_</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Traversal</span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576387"><span class="hs-identifier hs-type">t</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576386"><span class="hs-identifier hs-type">h</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576385"><span class="hs-identifier hs-type">t'</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576386"><span class="hs-identifier hs-type">h</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><a href="#local-6989586621679576387"><span class="hs-identifier hs-type">t</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576385"><span class="hs-identifier hs-type">t'</span></a></span></span></span></span><span>
+</span><span id="line-53"></span><span id="t_"><span class="annot"><span class="annottext">t_ :: forall t h t'. Traversal (LocalIds' t h) (LocalIds' t' h) t t'
+</span><a href="U.Codebase.Sqlite.LocalIds.html#t_"><span class="hs-identifier hs-var hs-var">t_</span></a></span></span><span> </span><span id="local-6989586621679574756"><span class="annot"><span class="annottext">t -&gt; f t'
+</span><a href="#local-6989586621679574756"><span class="hs-identifier hs-var">f</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-type">LocalIds</span></a></span><span> </span><span id="local-6989586621679574755"><span class="annot"><span class="annottext">Vector t
+</span><a href="#local-6989586621679574755"><span class="hs-identifier hs-var">t</span></a></span></span><span> </span><span id="local-6989586621679574754"><span class="annot"><span class="annottext">Vector h
+</span><a href="#local-6989586621679574754"><span class="hs-identifier hs-var">d</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall t h. Vector t -&gt; Vector h -&gt; LocalIds' t h
+</span><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;$&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Traversable t, Applicative f) =&gt;
+(a -&gt; f b) -&gt; t a -&gt; f (t b)
+</span><span class="hs-identifier hs-var">traverse</span></span><span> </span><span class="annot"><span class="annottext">t -&gt; f t'
+</span><a href="#local-6989586621679574756"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">Vector t
+</span><a href="#local-6989586621679574755"><span class="hs-identifier hs-var">t</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Applicative f =&gt; f (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;*&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="annot"><span class="annottext">Vector h
+</span><a href="#local-6989586621679574754"><span class="hs-identifier hs-var">d</span></a></span><span>
+</span><span id="line-54"></span><span>
+</span><span id="line-55"></span><span id="local-6989586621679576376"><span id="local-6989586621679576377"><span id="local-6989586621679576378"><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#h_"><span class="hs-identifier hs-type">h_</span></a></span><span> </span><span class="hs-glyph">::</span><span> </span><span class="annot"><span class="hs-identifier hs-type">Traversal</span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576378"><span class="hs-identifier hs-type">t</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576377"><span class="hs-identifier hs-type">h</span></a></span><span class="hs-special">)</span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds%27"><span class="hs-identifier hs-type">LocalIds'</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576378"><span class="hs-identifier hs-type">t</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576376"><span class="hs-identifier hs-type">h'</span></a></span><span class="hs-special">)</span><span> </span><span class="annot"><a href="#local-6989586621679576377"><span class="hs-identifier hs-type">h</span></a></span><span> </span><span class="annot"><a href="#local-6989586621679576376"><span class="hs-identifier hs-type">h'</span></a></span></span></span></span><span>
+</span><span id="line-56"></span><span id="h_"><span class="annot"><span class="annottext">h_ :: forall t h h'. Traversal (LocalIds' t h) (LocalIds' t h') h h'
+</span><a href="U.Codebase.Sqlite.LocalIds.html#h_"><span class="hs-identifier hs-var hs-var">h_</span></a></span></span><span> </span><span id="local-6989586621679574745"><span class="annot"><span class="annottext">h -&gt; f h'
+</span><a href="#local-6989586621679574745"><span class="hs-identifier hs-var">f</span></a></span></span><span> </span><span class="hs-special">(</span><span class="annot"><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-type">LocalIds</span></a></span><span> </span><span id="local-6989586621679574744"><span class="annot"><span class="annottext">Vector t
+</span><a href="#local-6989586621679574744"><span class="hs-identifier hs-var">t</span></a></span></span><span> </span><span id="local-6989586621679574743"><span class="annot"><span class="annottext">Vector h
+</span><a href="#local-6989586621679574743"><span class="hs-identifier hs-var">d</span></a></span></span><span class="hs-special">)</span><span> </span><span class="hs-glyph">=</span><span> </span><span class="annot"><span class="annottext">forall t h. Vector t -&gt; Vector h -&gt; LocalIds' t h
+</span><a href="U.Codebase.Sqlite.LocalIds.html#LocalIds"><span class="hs-identifier hs-var">LocalIds</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Functor f =&gt; (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;$&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a. Applicative f =&gt; a -&gt; f a
+</span><span class="hs-identifier hs-var">pure</span></span><span> </span><span class="annot"><span class="annottext">Vector t
+</span><a href="#local-6989586621679574744"><span class="hs-identifier hs-var">t</span></a></span><span> </span><span class="annot"><span class="annottext">forall (f :: * -&gt; *) a b. Applicative f =&gt; f (a -&gt; b) -&gt; f a -&gt; f b
+</span><span class="hs-operator hs-var">&lt;*&gt;</span></span><span> </span><span class="annot"><span class="annottext">forall (t :: * -&gt; *) (f :: * -&gt; *) a b.
+(Traversable t, Applicative f) =&gt;
+(a -&gt; f b) -&gt; t a -&gt; f (t b)
+</span><span class="hs-identifier hs-var">traverse</span></span><span> </span><span class="annot"><span class="annottext">h -&gt; f h'
+</span><a href="#local-6989586621679574745"><span class="hs-identifier hs-var">f</span></a></span><span> </span><span class="annot"><span class="annottext">Vector h
+</span><a href="#local-6989586621679574743"><span class="hs-identifier hs-var">d</span></a></span><span>
+</span><span id="line-57"></span></pre></body></html>
